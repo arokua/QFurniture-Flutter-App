@@ -6,6 +6,7 @@ import 'package:ecommerce_int2/screens/settings/change_password_page.dart';
 import 'package:ecommerce_int2/screens/settings/legal_about_page.dart';
 import 'package:ecommerce_int2/screens/settings/notifications_settings_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'change_language_page.dart';
 
@@ -19,13 +20,12 @@ class SettingsPage extends StatelessWidget {
           iconTheme: IconThemeData(
             color: Colors.black,
           ),
-          brightness: Brightness.light,
           backgroundColor: Colors.transparent,
           title: Text(
             'Settings',
             style: TextStyle(color: darkGrey),
           ),
-          elevation: 0,
+          elevation: 0, systemOverlayStyle: SystemUiOverlayStyle.dark,
         ),
         body: SafeArea(
           bottom: true,

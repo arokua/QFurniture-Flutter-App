@@ -1,12 +1,25 @@
 import 'package:ecommerce_int2/app_properties.dart';
-import 'package:ecommerce_int2/screens/faq_page.dart';
+import 'package:ecommerce_int2/screens/contact_page.dart';
 import 'package:ecommerce_int2/screens/payment/payment_page.dart';
 import 'package:ecommerce_int2/screens/settings/settings_page.dart';
 import 'package:ecommerce_int2/screens/tracking_page.dart';
 import 'package:ecommerce_int2/screens/wallet/wallet_page.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfilePage extends StatelessWidget {
+  static const String reviewUrl =
+      'https://g.page/r/CWFh7FllOq6wEAI/review';
+  static const String faqUrl =
+      'https://www.qfurniture.com.au/frequently-asked-questions-2';
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw 'Could not launch $url';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -99,7 +112,11 @@ class ProfilePage extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: <Widget>[
                             IconButton(
-                              icon: Image.asset('assets/icons/contact_us.png'), onPressed: () {},
+                              icon: Image.asset('assets/icons/contact_us.png'),
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => ContactPage()),
+                              ),
                             ),
                             Text(
                               'Support',
@@ -131,12 +148,19 @@ class ProfilePage extends StatelessWidget {
                 ),
                 Divider(),
                 ListTile(
+                  title: Text('Rate our store'),
+                  subtitle: Text('Google review'),
+                  leading: Icon(Icons.star_rate, color: Colors.orange),
+                  trailing: Icon(Icons.chevron_right, color: yellow),
+                  onTap: () => _openUrl(reviewUrl),
+                ),
+                Divider(),
+                ListTile(
                   title: Text('FAQ'),
-                  subtitle: Text('Questions and Answer'),
+                  subtitle: Text('View the FAQ online'),
                   leading: Image.asset('assets/icons/faq.png'),
                   trailing: Icon(Icons.chevron_right, color: yellow),
-                  onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => FaqPage())),
+                  onTap: () => _openUrl(faqUrl),
                 ),
                 Divider(),
               ],

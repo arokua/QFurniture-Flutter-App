@@ -5,17 +5,17 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:flutter/material.dart';
 
 class RecommendedList extends StatelessWidget {
-  List<Product> products = [
-    Product('assets/bag_1.png', 'Bag', 'Beautiful bag', 2.33),
-    Product('assets/cap_5.png', 'Cap', 'Cap with beautiful design', 10),
-    Product('assets/jeans_1.png', 'Jeans', 'Jeans for you', 20),
-    Product('assets/womanshoe_3.png', 'Woman Shoes',
+  final List<Product> products = [
+    Product.placeholder('assets/bag_1.png', 'Bag', 'Beautiful bag', 2.33),
+    Product.placeholder('assets/cap_5.png', 'Cap', 'Cap with beautiful design', 10),
+    Product.placeholder('assets/jeans_1.png', 'Jeans', 'Jeans for you', 20),
+    Product.placeholder('assets/womanshoe_3.png', 'Woman Shoes',
         'Shoes with special discount', 30),
-    Product('assets/bag_10.png', 'Bag Express', 'Bag for your shops', 40),
-    Product('assets/jeans_3.png', 'Jeans', 'Beautiful Jeans', 102.33),
-    Product('assets/ring_1.png', 'Silver Ring', 'Description', 52.33),
-    Product('assets/shoeman_7.png', 'Shoes', 'Description', 62.33),
-    Product('assets/headphone_9.png', 'Headphones', 'Description', 72.33),
+    Product.placeholder('assets/bag_10.png', 'Bag Express', 'Bag for your shops', 40),
+    Product.placeholder('assets/jeans_3.png', 'Jeans', 'Beautiful Jeans', 102.33),
+    Product.placeholder('assets/ring_1.png', 'Silver Ring', 'Description', 52.33),
+    Product.placeholder('assets/shoeman_7.png', 'Shoes', 'Description', 62.33),
+    Product.placeholder('assets/headphone_9.png', 'Headphones', 'Description', 72.33),
   ];
 
   @override
@@ -62,8 +62,8 @@ class RecommendedList extends StatelessWidget {
                       decoration: BoxDecoration(
                         gradient: RadialGradient(
                             colors: [
-                              Colors.grey.withOpacity(0.3),
-                              Colors.grey.withOpacity(0.7),
+                              Colors.grey.withValues(alpha: 0.3),
+                              Colors.grey.withValues(alpha: 0.7),
                             ],
                             center: Alignment(0, 0),
                             radius: 0.6,
@@ -72,7 +72,7 @@ class RecommendedList extends StatelessWidget {
                       ),
                       child: Hero(
                           tag: products[index].image,
-                          child: Image.asset(products[index].image))),
+                          child: Image(image: products[index].imageProvider))),
                 ),
               ),
               mainAxisSpacing: 4.0,

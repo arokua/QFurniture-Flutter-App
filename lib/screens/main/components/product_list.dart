@@ -5,7 +5,7 @@ import 'package:ecommerce_int2/screens/product/product_page.dart';
 import 'package:flutter/material.dart';
 
 class ProductList extends StatelessWidget {
-  List<Product> products;
+  final List<Product> products;
 
   final SwiperController swiperController = SwiperController();
 
@@ -36,7 +36,7 @@ class ProductList extends StatelessWidget {
                   "The itemCount is too big, we suggest use FractionPaginationBuilder instead of DotSwiperPaginationBuilder in this sitituation");
             }
             Color activeColor = mediumYellow;
-            Color color = Colors.grey.withOpacity(.3);
+            Color color = Colors.grey.withValues(alpha: 0.3);
             double size = 10.0;
             double space = 5.0;
 
@@ -168,8 +168,8 @@ class ProductCard extends StatelessWidget {
           Positioned(
             child: Hero(
               tag: product.image,
-              child: Image.asset(
-                product.image,
+              child: Image(
+                image: product.imageProvider,
                 height: height / 1.7,
                 width: width / 1.4,
                 fit: BoxFit.contain,

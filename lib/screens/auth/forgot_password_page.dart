@@ -1,15 +1,14 @@
 import 'package:ecommerce_int2/app_properties.dart';
 import 'package:flutter/material.dart';
 
-import 'confirm_otp_page.dart';
-
 class ForgotPasswordPage extends StatefulWidget {
   @override
   _ForgotPasswordPageState createState() => _ForgotPasswordPageState();
 }
 
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
-  TextEditingController phoneNumber = TextEditingController(text: '46834683');
+  TextEditingController emailController =
+      TextEditingController(text: 'you@example.com');
 
   GlobalKey prefixKey = GlobalKey();
   double prefixWidth = 0;
@@ -42,7 +41,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     Widget subTitle = Padding(
         padding: const EdgeInsets.only(right: 56.0),
         child: Text(
-          'Enter your registered mobile number to get the OTP',
+          'Enter your email and we will send a reset link',
           style: TextStyle(
             color: Colors.white,
             fontSize: 16.0,
@@ -54,14 +53,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       bottom: 40,
       child: InkWell(
         onTap: () {
-          Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => ConfirmOtpPage()));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Password reset via email will be enabled soon.',
+              ),
+            ),
+          );
         },
         child: Container(
           width: MediaQuery.of(context).size.width / 2,
           height: 80,
           child: Center(
-              child: new Text("Send OTP",
+              child: new Text("Send Email",
                   style: const TextStyle(
                       color: const Color(0xfffefefe),
                       fontWeight: FontWeight.w600,
@@ -108,9 +112,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8.0),
                     child: TextField(
-                      controller: phoneNumber,
+                      controller: emailController,
                       style: TextStyle(fontSize: 16.0),
-                      keyboardType: TextInputType.phone,
+                      keyboardType: TextInputType.emailAddress,
                     ),
                   ),
                 ),
@@ -150,13 +154,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         ));
     return GestureDetector(
       onTap: () => FocusScope.of(context).requestFocus(new FocusNode()),
-      child: Container(
-        decoration: BoxDecoration(
-            image: DecorationImage(
-                image: AssetImage('assets/background.jpg'), fit: BoxFit.cover)),
-        child: Container(
-          decoration: BoxDecoration(color: transparentYellow),
-          child: Scaffold(
+      child: Stack(
+        children: <Widget>[
+          background,
+          Scaffold(
+            backgroundColor: Colors.transparent,
             appBar: AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0.0,
@@ -182,7 +184,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               ],
             ),
           ),
-        ),
+        ],
       ),
     );
   }

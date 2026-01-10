@@ -1,7 +1,6 @@
 import 'package:ecommerce_int2/app_properties.dart';
 import 'package:ecommerce_int2/screens/intro_page.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:pin_code_text_field/pin_code_text_field.dart';
 
 class ConfirmOtpPage extends StatefulWidget {
@@ -120,6 +119,37 @@ class _ConfirmOtpPageState extends State<ConfirmOtpPage> {
       ),
     );
 
+    Widget otpInput = LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 360) {
+          return otpCode;
+        }
+        return Padding(
+          padding: const EdgeInsets.only(right: 28.0),
+          child: Center(
+            child: PinCodeTextField(
+              controller: new TextEditingController(),
+              highlightColor: Colors.white,
+              highlightAnimation: true,
+              highlightAnimationBeginColor: Colors.white,
+              highlightAnimationEndColor: Theme.of(context).primaryColor,
+              pinTextAnimatedSwitcherDuration: Duration(milliseconds: 500),
+              wrapAlignment: WrapAlignment.center,
+              hasTextBorderColor: Colors.transparent,
+              highlightPinBoxColor: Colors.white,
+              autofocus: true,
+              pinBoxHeight: 60,
+              pinBoxWidth: 60,
+              pinBoxRadius: 5,
+              defaultBorderColor: Colors.transparent,
+              pinBoxColor: Color.fromRGBO(255, 255, 255, 0.8),
+              maxLength: 4,
+            ),
+          ),
+        );
+      },
+    );
+
     Widget resendText = Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
@@ -170,29 +200,7 @@ class _ConfirmOtpPageState extends State<ConfirmOtpPage> {
                       Spacer(),
                       subTitle,
                       Spacer(flex: 1),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 28.0),
-                        child: Center(
-                          child: PinCodeTextField(
-                            controller: new TextEditingController(),
-                            highlightColor: Colors.white,
-                            highlightAnimation: true,
-                            highlightAnimationBeginColor: Colors.white,
-                            highlightAnimationEndColor: Theme.of(context).primaryColor,
-                            pinTextAnimatedSwitcherDuration: Duration(milliseconds: 500),
-                            wrapAlignment: WrapAlignment.center,
-                            hasTextBorderColor: Colors.transparent,
-                            highlightPinBoxColor: Colors.white,
-                            autofocus: true,
-                            pinBoxHeight: 60,
-                            pinBoxWidth: 60,
-                            pinBoxRadius: 5,
-                            defaultBorderColor: Colors.transparent,
-                            pinBoxColor: Color.fromRGBO(255, 255, 255, 0.8),
-                            maxLength: 4,
-                          ),
-                        ),
-                      ),
+                      otpInput,
                       Spacer(flex: 1),
 //                      otpCode,
                       Padding(

@@ -15,13 +15,12 @@ class SelectCardPage extends StatelessWidget {
           iconTheme: IconThemeData(
             color: Colors.black,
           ),
-          brightness: Brightness.light,
           backgroundColor: Colors.transparent,
           title: Text(
             'Select Card',
             style: TextStyle(color: darkGrey),
           ),
-          elevation: 0,
+          elevation: 0, systemOverlayStyle: SystemUiOverlayStyle.dark,
         ),
         body: Center(
           child: SizedBox(

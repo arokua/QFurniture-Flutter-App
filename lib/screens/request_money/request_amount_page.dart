@@ -2,6 +2,7 @@ import 'package:ecommerce_int2/app_properties.dart';
 import 'package:ecommerce_int2/models/user.dart';
 import 'package:ecommerce_int2/screens/request_money/receive_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class RequestAmountPage extends StatelessWidget {
   final User user;
@@ -10,7 +11,6 @@ class RequestAmountPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    double width = MediaQuery.of(context).size.width;
     Widget viewProductButton = InkWell(
       onTap: () {},
       child: Container(
@@ -72,13 +72,12 @@ class RequestAmountPage extends StatelessWidget {
           iconTheme: IconThemeData(
             color: Colors.black,
           ),
-          brightness: Brightness.light,
           backgroundColor: Colors.transparent,
           title: Text(
             'Request Amount',
             style: TextStyle(color: darkGrey),
           ),
-          elevation: 0,
+          elevation: 0, systemOverlayStyle: SystemUiOverlayStyle.dark,
         ),
         body: LayoutBuilder(
           builder: (context, constraints) => SingleChildScrollView(

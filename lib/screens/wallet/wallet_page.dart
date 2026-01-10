@@ -61,7 +61,8 @@ class _WalletPageState extends State<WalletPage> with TickerProviderStateMixin {
                                     builder: (_) => PaymentHistoryPage())),
                             icon: SvgPicture.asset(
                               'assets/icons/reload_icon.svg',
-                              color: Colors.red,
+                              colorFilter:
+                                  ColorFilter.mode(Colors.red, BlendMode.srcIn),
                             ),
                           ),
                         )),
