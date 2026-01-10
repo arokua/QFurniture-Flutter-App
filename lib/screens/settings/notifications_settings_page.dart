@@ -18,26 +18,18 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   bool feedbackReviews = true;
   bool updates = true;
 
-  Widget platformSwitch(bool val) {
+  Widget platformSwitch(bool val, ValueChanged<bool> onChanged) {
     if (Platform.isIOS) {
       return CupertinoSwitch(
-        onChanged: (value) {
-          setState(() {
-            val = value;
-          });
-        },
-        value: true,
-        activeTrackColor: yellow,
+        onChanged: onChanged,
+        value: val,
+        activeColor: yellow, // Updated to use activeColor for iOS
       );
     } else {
       return Switch(
-        onChanged: (value) {
-          setState(() {
-            val = value;
-          });
-        },
+        onChanged: onChanged,
         value: val,
-        activeThumbColor: yellow,
+        activeColor: yellow, // Updated to use activeColor for Android
       );
     }
   }
@@ -48,19 +40,20 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         iconTheme: IconThemeData(
-            color: Colors.black,
-          ),
+          color: Colors.black,
+        ),
         backgroundColor: Colors.transparent,
         title: Text(
           'Settings',
           style: TextStyle(color: darkGrey),
         ),
-        elevation: 0, systemOverlayStyle: SystemUiOverlayStyle.dark,
+        elevation: 0,
+        systemOverlayStyle: SystemUiOverlayStyle.dark,
       ),
       body: SafeArea(
         bottom: true,
         child: Padding(
-          padding: const EdgeInsets.only(top:24.0,left: 24.0, right: 24.0),
+          padding: const EdgeInsets.only(top: 24.0, left: 24.0, right: 24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -79,23 +72,43 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                   children: <Widget>[
                     ListTile(
                       title: Text('My orders'),
-                      trailing: platformSwitch(myOrders),
+                      trailing: platformSwitch(myOrders, (value) {
+                        setState(() {
+                          myOrders = value;
+                        });
+                      }),
                     ),
                     ListTile(
                       title: Text('Reminders'),
-                      trailing: platformSwitch(reminders),
+                      trailing: platformSwitch(reminders, (value) {
+                        setState(() {
+                          reminders = value;
+                        });
+                      }),
                     ),
                     ListTile(
                       title: Text('New Offers'),
-                      trailing: platformSwitch(newOffers),
+                      trailing: platformSwitch(newOffers, (value) {
+                        setState(() {
+                          newOffers = value;
+                        });
+                      }),
                     ),
                     ListTile(
                       title: Text('Feedbacks and Reviews'),
-                      trailing: platformSwitch(feedbackReviews,)
+                      trailing: platformSwitch(feedbackReviews, (value) {
+                        setState(() {
+                          feedbackReviews = value;
+                        });
+                      }),
                     ),
                     ListTile(
                       title: Text('Updates'),
-                      trailing: platformSwitch(updates),
+                      trailing: platformSwitch(updates, (value) {
+                        setState(() {
+                          updates = value;
+                        });
+                      }),
                     ),
                   ],
                 ),
