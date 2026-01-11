@@ -1,10 +1,9 @@
-
 import 'package:ecommerce_int2/app_properties.dart';
 import 'package:flutter/material.dart';
 
 import 'register_page.dart';
 
-class                            WelcomeBackPage extends StatefulWidget {
+class WelcomeBackPage extends StatefulWidget {
   @override
   _WelcomeBackPageState createState() => _WelcomeBackPageState();
 }
@@ -120,6 +119,36 @@ class _WelcomeBackPageState extends State<WelcomeBackPage> {
       ),
     );
 
+    Widget createAccountLink = Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Text(
+            'Don\'t have an account? ',
+            style: TextStyle(
+              fontStyle: FontStyle.italic,
+              color: Color.fromRGBO(255, 255, 255, 0.5),
+              fontSize: 14.0,
+            ),
+          ),
+          InkWell(
+            onTap: () {
+              Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => RegisterPage()));
+            },
+            child: Text(
+              'Create Account',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14.0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
     Widget forgotPassword = Padding(
       padding: const EdgeInsets.only(bottom: 20),
       child: Row(
@@ -149,20 +178,17 @@ class _WelcomeBackPageState extends State<WelcomeBackPage> {
     );
 
     return Scaffold(
-
       body: Stack(
         children: <Widget>[
-
           Container(
             decoration: BoxDecoration(
-              image: DecorationImage(image: AssetImage('assets/background.jpg'),
-                  fit: BoxFit.cover)
-            ),
+                image: DecorationImage(
+                    image: AssetImage('assets/background.jpg'),
+                    fit: BoxFit.cover)),
           ),
           Container(
             decoration: BoxDecoration(
-                color: transparentYellow,
-
+              color: transparentYellow,
             ),
           ),
           Padding(

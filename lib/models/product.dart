@@ -82,7 +82,8 @@ class Product {
   String get description =>
       shortDescription.isNotEmpty ? shortDescription : longDescription;
 
-  double get price => _parsePrice(salePrice.isNotEmpty ? salePrice : regularPrice);
+  double get price =>
+      _parsePrice(salePrice.isNotEmpty ? salePrice : regularPrice);
 
   String get image => images.isNotEmpty ? images.first : _fallbackImage;
 
@@ -101,7 +102,9 @@ class Product {
     if (value == null || value.isEmpty) {
       return 0;
     }
-    return double.tryParse(value) ?? 0;
+    final parsedValue = double.tryParse(value) ?? 0;
+    // Backend prices are stored as integers (cents), divide by 100 to get dollars
+    return parsedValue / 100;
   }
 
   static List<String> _extractNames(dynamic rawList) {
