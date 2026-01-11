@@ -24,7 +24,7 @@ class CategoryCard extends StatelessWidget {
                 padding: EdgeInsets.all(8.0),
                 child: Center(
                   child: Text(
-                    category.category,
+                    category.category ?? category.name,
                     textAlign: TextAlign.right,
                   ),
                 ),
@@ -34,14 +34,21 @@ class CategoryCard extends StatelessWidget {
                 width: 90,
                 decoration: BoxDecoration(
                     gradient: RadialGradient(
-                        colors: [category.begin, category.end],
+                        colors: [
+                          category.begin ?? Color(0xffFCE183),
+                          category.end ?? Color(0xffF68D7F)
+                        ],
                         center: Alignment(0, 0),
                         radius: 0.8,
                         focal: Alignment(0, 0),
                         focalRadius: 0.1)),
                 padding: EdgeInsets.all(8.0),
                 child: Center(
-                  child: Image.asset(category.image),
+                  child: category.image != null && category.image!.startsWith('assets/')
+                      ? Image.asset(category.image!)
+                      : category.image != null
+                          ? Image.network(category.image!, errorBuilder: (context, error, stackTrace) => Icon(Icons.image_not_supported))
+                          : Icon(Icons.category),
                 ),
               )
             ],

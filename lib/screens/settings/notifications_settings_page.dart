@@ -23,13 +23,13 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
       return CupertinoSwitch(
         onChanged: onChanged,
         value: val,
-        activeColor: yellow, // Updated to use activeColor for iOS
+        activeTrackColor: yellow, // Updated to use activeColor for iOS
       );
     } else {
       return Switch(
         onChanged: onChanged,
         value: val,
-        activeColor: yellow, // Updated to use activeColor for Android
+        activeThumbColor: yellow, // Updated to use activeColor for Android
       );
     }
   }

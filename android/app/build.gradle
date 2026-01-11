@@ -60,6 +60,15 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        // Force compatible versions that work with AGP 8.5.2
+        force 'androidx.browser:browser:1.7.0'
+        force 'androidx.core:core:1.12.0'
+        force 'androidx.core:core-ktx:1.12.0'
+    }
+}
+
 flutter {
     source '../..'
 }

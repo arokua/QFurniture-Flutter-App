@@ -2,6 +2,7 @@ import 'package:ecommerce_int2/app_properties.dart';
 import 'package:flutter/material.dart';
 
 import 'register_page.dart';
+import 'package:ecommerce_int2/screens/main/main_page.dart';
 
 class WelcomeBackPage extends StatefulWidget {
   @override
@@ -46,8 +47,10 @@ class _WelcomeBackPageState extends State<WelcomeBackPage> {
       bottom: 40,
       child: InkWell(
         onTap: () {
+          // TODO: Add actual authentication logic here
+          // For now, proceed to main page after login
           Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => RegisterPage()));
+              .pushReplacement(MaterialPageRoute(builder: (_) => MainPage()));
         },
         child: Container(
           width: MediaQuery.of(context).size.width / 2,
@@ -203,7 +206,8 @@ class _WelcomeBackPageState extends State<WelcomeBackPage> {
                 Spacer(flex: 2),
                 loginForm,
                 Spacer(flex: 2),
-                forgotPassword
+                forgotPassword,
+                createAccountLink
               ],
             ),
           )

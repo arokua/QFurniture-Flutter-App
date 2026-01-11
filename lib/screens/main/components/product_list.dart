@@ -1,4 +1,5 @@
 import 'package:card_swiper/card_swiper.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:ecommerce_int2/app_properties.dart';
 import 'package:ecommerce_int2/models/product.dart';
 import 'package:ecommerce_int2/screens/product/product_page.dart';
@@ -80,9 +81,12 @@ class ProductList extends StatelessWidget {
               padding: const EdgeInsets.all(16.0),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: dots,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: dots,
+                  ),
                 ),
               ),
             );
@@ -152,7 +156,7 @@ class ProductCard extends StatelessWidget {
                           color: Color.fromRGBO(224, 69, 10, 1),
                         ),
                         child: Text(
-                          '\$${product.price}',
+                          '\$${product.price.toStringAsFixed(2)}',
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -168,12 +172,41 @@ class ProductCard extends StatelessWidget {
           Positioned(
             child: Hero(
               tag: product.image,
-              child: Image(
-                image: product.imageProvider,
-                height: height / 1.7,
-                width: width / 1.4,
-                fit: BoxFit.contain,
-              ),
+              child: product.hasNetworkImage
+                  ? CachedNetworkImage(
+                      imageUrl: product.image,
+                      height: height / 1.7,
+                      width: width / 1.4,
+                      fit: BoxFit.contain,
+                      placeholder: (context, url) => Container(
+                        height: height / 1.7,
+                        width: width / 1.4,
+                        color: Colors.grey[200],
+                        child: Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        height: height / 1.7,
+                        width: width / 1.4,
+                        color: Colors.grey[200],
+                        child:
+                            Icon(Icons.image_not_supported, color: Colors.grey),
+                      ),
+                    )
+                  : Image(
+                      image: product.imageProvider,
+                      height: height / 1.7,
+                      width: width / 1.4,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        height: height / 1.7,
+                        width: width / 1.4,
+                        color: Colors.grey[200],
+                        child:
+                            Icon(Icons.image_not_supported, color: Colors.grey),
+                      ),
+                    ),
             ),
           ),
         ],
