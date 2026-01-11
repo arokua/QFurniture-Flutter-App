@@ -12,37 +12,37 @@ class CategoryListPage extends StatefulWidget {
 
 class _CategoryListPageState extends State<CategoryListPage> {
   List<Category> categories = [
-    Category(
+    Category.legacy(
       Color(0xffFCE183),
       Color(0xffF68D7F),
       'Gadgets',
       'assets/jeans_5.png',
     ),
-    Category(
+    Category.legacy(
       Color(0xffF749A2),
       Color(0xffFF7375),
       'Clothes',
       'assets/jeans_5.png',
     ),
-    Category(
+    Category.legacy(
       Color(0xff00E9DA),
       Color(0xff5189EA),
       'Fashion',
       'assets/jeans_5.png',
     ),
-    Category(
+    Category.legacy(
       Color(0xffAF2D68),
       Color(0xff632376),
       'Home',
       'assets/jeans_5.png',
     ),
-    Category(
+    Category.legacy(
       Color(0xff36E892),
       Color(0xff33B2B9),
       'Beauty',
       'assets/jeans_5.png',
     ),
-    Category(
+    Category.legacy(
       Color(0xffF123C4),
       Color(0xff668CEA),
       'Appliances',
@@ -102,7 +102,8 @@ class _CategoryListPageState extends State<CategoryListPage> {
                   if (value.isNotEmpty) {
                     List<Category> tempList = [];
                     categories.forEach((category) {
-                      if (category.category.toLowerCase().contains(value)) {
+                      final categoryName = category.category ?? category.name;
+                      if (categoryName.toLowerCase().contains(value.toLowerCase())) {
                         tempList.add(category);
                       }
                     });
@@ -128,10 +129,10 @@ class _CategoryListPageState extends State<CategoryListPage> {
                     vertical: 16.0,
                   ),
                   child: StaggeredCardCard(
-                    begin: searchResults[index].begin,
-                    end: searchResults[index].end,
-                    categoryName: searchResults[index].category,
-                    assetPath: searchResults[index].image,
+                    begin: searchResults[index].begin ?? Color(0xffFCE183),
+                    end: searchResults[index].end ?? Color(0xffF68D7F),
+                    categoryName: searchResults[index].category ?? searchResults[index].name,
+                    assetPath: searchResults[index].image ?? 'assets/jeans_5.png',
                   ),
                 ),
               ),

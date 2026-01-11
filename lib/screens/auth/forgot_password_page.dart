@@ -162,6 +162,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             appBar: AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0.0,
+              leading: IconButton(
+                icon: Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
             ),
             body: Stack(
               children: <Widget>[
