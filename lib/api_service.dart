@@ -12,7 +12,7 @@ class ApiService {
   static const String wcApiBase = '$apiBase/wc/store/v1'; // Public API
 
   static String url(int nrResults) {
-    return 'http://api.randomuser.me/?results=$nrResults';
+    return 'https://api.randomuser.me/?results=$nrResults';
   }
 
   static Future<List<User>> getUsers({int nrUsers = 1}) async {
