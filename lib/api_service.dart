@@ -6,12 +6,11 @@ import 'models/product.dart';
 import 'models/user.dart';
 import 'models/category.dart';
 
-
 class ApiService {
   static const String baseUrl = 'https://qfurniture.com.au';
   static const String apiBase = '$baseUrl/wp-json';
   static const String wcApiBase = '$apiBase/wc/store/v1'; // Public API
-  
+
   static String url(int nrResults) {
     return 'http://api.randomuser.me/?results=$nrResults';
   }
@@ -19,9 +18,7 @@ class ApiService {
   static Future<List<User>> getUsers({int nrUsers = 1}) async {
     try {
       final response = await http.get(
-          //TODO flutter 2 migration
         Uri.parse(url(nrUsers)),
-        headers: {"Content-Type": "application/json"},
       );
 
       if (response.statusCode == 200) {
@@ -39,20 +36,19 @@ class ApiService {
     }
   }
 
-  static Future<List<Product>> getProducts({int page = 1, int perPage = 20, String? category}) async {
+  static Future<List<Product>> getProducts(
+      {int page = 1, int perPage = 20, String? category}) async {
     try {
       String url = productsUrl(page: page, perPage: perPage);
       if (category != null && category.isNotEmpty) {
         url += '&category=$category';
       }
-      
-      final response = await http.get(
+
+      final response = await http
+          .get(
         Uri.parse(url),
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-      ).timeout(
+      )
+          .timeout(
         Duration(seconds: 10),
         onTimeout: () {
           throw Exception('Request timeout');
@@ -75,7 +71,7 @@ class ApiService {
       return [];
     }
   }
-  
+
   static String productsUrl({int page = 1, int perPage = 20}) =>
       '$wcApiBase/products?page=$page&per_page=$perPage';
 
@@ -86,14 +82,12 @@ class ApiService {
       if (parent != null) {
         url += '&parent=$parent';
       }
-      
-      final response = await http.get(
+
+      final response = await http
+          .get(
         Uri.parse(url),
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-      ).timeout(
+      )
+          .timeout(
         Duration(seconds: 10),
         onTimeout: () {
           throw Exception('Request timeout');
@@ -105,7 +99,8 @@ class ApiService {
         if (data is List) {
           return data
               .map((item) => Category.fromJson(item as Map<String, dynamic>))
-              .where((category) => category.count > 0) // Only show categories with products
+              .where((category) =>
+                  category.count > 0) // Only show categories with products
               .toList();
         }
       } else {
@@ -119,7 +114,8 @@ class ApiService {
   }
 
   /// Get products by category slug
-  static Future<List<Product>> getProductsByCategory(String categorySlug, {int page = 1, int perPage = 20}) async {
+  static Future<List<Product>> getProductsByCategory(String categorySlug,
+      {int page = 1, int perPage = 20}) async {
     try {
       // First get category ID from slug
       final categories = await getCategories();
@@ -127,12 +123,13 @@ class ApiService {
         (cat) => cat.slug == categorySlug,
         orElse: () => Category(id: 0, name: '', slug: '', count: 0),
       );
-      
+
       if (category.id == 0) {
         return [];
       }
-      
-      return await getProducts(page: page, perPage: perPage, category: category.id.toString());
+
+      return await getProducts(
+          page: page, perPage: perPage, category: category.id.toString());
     } catch (e) {
       print('Error fetching products by category: $e');
       return [];
@@ -140,15 +137,15 @@ class ApiService {
   }
 
   /// Search products
-  static Future<List<Product>> searchProducts(String query, {int page = 1, int perPage = 20}) async {
+  static Future<List<Product>> searchProducts(String query,
+      {int page = 1, int perPage = 20}) async {
     try {
-      final response = await http.get(
-        Uri.parse('$wcApiBase/products?search=$query&page=$page&per_page=$perPage'),
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-      ).timeout(
+      final response = await http
+          .get(
+        Uri.parse(
+            '$wcApiBase/products?search=$query&page=$page&per_page=$perPage'),
+      )
+          .timeout(
         Duration(seconds: 10),
         onTimeout: () {
           throw Exception('Request timeout');
@@ -173,13 +170,11 @@ class ApiService {
   /// Get single product by ID
   static Future<Product?> getProduct(int productId) async {
     try {
-      final response = await http.get(
+      final response = await http
+          .get(
         Uri.parse('$wcApiBase/products/$productId'),
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-      ).timeout(
+      )
+          .timeout(
         Duration(seconds: 10),
         onTimeout: () {
           throw Exception('Request timeout');
@@ -197,4 +192,3 @@ class ApiService {
     }
   }
 }
-
