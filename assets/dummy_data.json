@@ -1,0 +1,33 @@
+[
+  {
+    "id": 101,
+    "name": "Modern Sofa Set",
+    "price": 1299.90,
+    "currency": "AUD",
+    "image": "assets/images/placeholder.png",
+    "images": ["assets/images/placeholder.png"],
+    "inStock": true,
+    "category": "Living Room",
+    "age": "",
+    "description": "Comfortable modern sofa set perfect for your living room. Features premium fabric and ergonomic design.",
+    "sku": "SOFA-001",
+    "variants": [
+      {"sku": "SOFA-001-BLK", "label": "Black", "price": 1299.90, "inStock": true},
+      {"sku": "SOFA-001-GRY", "label": "Grey", "price": 1299.90, "inStock": true}
+    ]
+  },
+  {
+    "id": 102,
+    "name": "Dining Table",
+    "price": 599.50,
+    "currency": "AUD",
+    "image": "assets/images/placeholder.png",
+    "images": ["assets/images/placeholder.png"],
+    "inStock": false,
+    "category": "Dining Room",
+    "age": "",
+    "description": "Elegant dining table made from premium wood. Seats up to 6 people comfortably.",
+    "sku": "TABLE-002",
+    "variants": []
+  }
+]
