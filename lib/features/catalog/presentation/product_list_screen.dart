@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
+import '../../../config/store_cart_api_service.dart';
 import '../../cart/data/cart_provider.dart';
 import '../data/favorites_provider.dart';
 import '../domain/product.dart';
@@ -20,6 +21,62 @@ final sortOrderProvider = StateProvider<String>((ref) => 'name_asc');
 
 /// Increment to force product list refresh (pull-to-refresh).
 final refreshTriggerProvider = StateProvider<int>((ref) => 0);
+
+final allProductsProvider = FutureProvider<List<Product>>((ref) async {
+  ref.watch(refreshTriggerProvider);
+  final repo = ref.watch(productRepoProvider);
+  return repo.getAll();
+});
+
+final categoriesProvider = FutureProvider<List<String>>((ref) async {
+  final products = await ref.watch(allProductsProvider.future);
+  final allCats = products
+      .expand((p) => p.categoryList)
+      .map((c) => c.trim())
+      .where((c) => c.isNotEmpty)
+      .toSet()
+      .toList();
+  allCats.sort((a, b) {
+    bool isMainA = kMainCategories.contains(a);
+    bool isMainB = kMainCategories.contains(b);
+    if (isMainA && !isMainB) return -1;
+    if (!isMainA && isMainB) return 1;
+    return a.compareTo(b);
+  });
+  return allCats;
+});
+
+final filteredProductsProvider = Provider<List<Product>>((ref) {
+  final allProducts = ref.watch(allProductsProvider).value ?? [];
+  final searchQuery = ref.watch(searchQueryProvider);
+  final selectedCategory = ref.watch(selectedCategoryProvider);
+  final sortOrder = ref.watch(sortOrderProvider);
+
+  var filtered = allProducts;
+
+  if (searchQuery.isNotEmpty) {
+    final query = searchQuery.toLowerCase();
+    filtered = filtered
+        .where((p) =>
+            p.name.toLowerCase().contains(query) ||
+            p.description.toLowerCase().contains(query) ||
+            (p.sku?.toLowerCase().contains(query) ?? false))
+        .toList();
+  }
+
+  if (selectedCategory != null) {
+    final selectedNorm = _ProductListScreenState._normalizeCategoryForMatch(selectedCategory);
+    filtered = filtered.where((p) {
+      final matchList = p.categoryList.any((c) =>
+          _ProductListScreenState._normalizeCategoryForMatch(c) == selectedNorm);
+      if (matchList) return true;
+      final catNorm = _ProductListScreenState._normalizeCategoryForMatch(p.category);
+      return catNorm == selectedNorm;
+    }).toList();
+  }
+
+  return _ProductListScreenState._sortProducts(filtered, sortOrder);
+});
 
 class ProductListScreen extends ConsumerStatefulWidget {
   const ProductListScreen({super.key});
@@ -43,7 +100,32 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('QFurniture'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF795548), // Brand Brown
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Q',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 22,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'Furniture',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        centerTitle: true,
         elevation: 0,
         actions: [
           IconButton(
@@ -94,22 +176,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 ),
                 const SizedBox(height: 12),
                 // Category Filter: all categories that appear in any product
-                FutureBuilder<List<String>>(
-                  future: repo.getAll().then((products) {
-                    final allCats = products
-                        .expand((p) => p.categoryList)
-                        .map((c) => c.trim())
-                        .where((c) => c.isNotEmpty)
-                        .toSet()
-                        .toList();
-                    allCats.sort();
-                    return allCats;
-                  }),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                      return const SizedBox.shrink();
-                    }
-                    final categories = ['All', ...snapshot.data!];
+                ref.watch(categoriesProvider).when(
+                  loading: () => const SizedBox(height: 40),
+                  error: (_, __) => const SizedBox.shrink(),
+                  data: (data) {
+                    if (data.isEmpty) return const SizedBox.shrink();
+                    final categories = ['All', ...data];
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -130,9 +202,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                                   selected: isSelected,
                                   onSelected: (selected) {
                                     ref
-                                            .read(selectedCategoryProvider.notifier)
-                                            .state =
-                                        category == 'All' ? null : category;
+                                        .read(selectedCategoryProvider.notifier)
+                                        .state = category == 'All' ? null : category;
                                   },
                                 ),
                               );
@@ -154,7 +225,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                                 DropdownMenuItem(
                                     value: 'name_asc', child: Text('Name A–Z')),
                                 DropdownMenuItem(
-                                    value: 'name_desc', child: Text('Name Z–A')),
+                                    value: 'name_desc',
+                                    child: Text('Name Z–A')),
                                 DropdownMenuItem(
                                     value: 'price_asc',
                                     child: Text('Price: low to high')),
@@ -164,7 +236,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                               ],
                               onChanged: (v) {
                                 if (v != null) {
-                                  ref.read(sortOrderProvider.notifier).state = v;
+                                  ref.read(sortOrderProvider.notifier).state =
+                                      v;
                                 }
                               },
                             ),
@@ -179,82 +252,104 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           ),
           // Products List
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: () async {
-                ref.read(refreshTriggerProvider.notifier).state++;
-              },
-              child: FutureBuilder<List<Product>>(
-                future: Future.wait([
-                  Future.value(refreshTrigger),
-                  repo.getAll(),
-                ]).then((r) => r[1] as List<Product>),
-              builder: (ctx, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return _buildLoadingGrid(isGridView);
-                }
-                final allProducts = snap.data ?? [];
+            child: Builder(
+              builder: (context) {
+                final allProductsAsync = ref.watch(allProductsProvider);
 
-                // Apply filters
-                var filteredProducts = allProducts;
-                if (searchQuery.isNotEmpty) {
-                  filteredProducts = filteredProducts
-                      .where((p) =>
-                          p.name
-                              .toLowerCase()
-                              .contains(searchQuery.toLowerCase()) ||
-                          p.description
-                              .toLowerCase()
-                              .contains(searchQuery.toLowerCase()) ||
-                          (p.sku
-                                  ?.toLowerCase()
-                                  .contains(searchQuery.toLowerCase()) ??
-                              false))
-                      .toList();
-                }
-                if (selectedCategory != null) {
-                  final selected = selectedCategory.trim().toLowerCase();
-                  filteredProducts = filteredProducts
-                      .where((p) {
-                        final matchList = p.categoryList
-                            .any((c) => c.trim().toLowerCase() == selected);
-                        if (matchList) return true;
-                        return p.category
-                            .toLowerCase()
-                            .contains(selected);
-                      })
-                      .toList();
-                }
-
-                if (filteredProducts.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                return RefreshIndicator(
+                  onRefresh: () async {
+                    ref.read(refreshTriggerProvider.notifier).state++;
+                  },
+                  child: allProductsAsync.when(
+                    loading: () => _buildLoadingGrid(isGridView),
+                    error: (e, __) => ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: [
-                        Icon(Icons.search_off,
-                            size: 64, color: Colors.grey[400]),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No products found',
-                          style:
-                              Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    color: Colors.grey[600],
-                                  ),
+                        SizedBox(
+                          height: 300,
+                          child: Center(child: Text('Error: $e')),
                         ),
                       ],
                     ),
-                  );
-                }
+                    data: (_) {
+                      final filteredProducts = ref.watch(filteredProductsProvider);
 
-                return isGridView
-                    ? _buildGridView(filteredProducts)
-                    : _buildListView(filteredProducts);
+                      if (filteredProducts.isEmpty) {
+                        return ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: [
+                            SizedBox(
+                              height: 300,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.search_off,
+                                        size: 64, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No products found',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge
+                                          ?.copyWith(
+                                            color: Colors.grey[600],
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return isGridView
+                          ? _buildGridView(filteredProducts)
+                          : _buildListView(filteredProducts);
+                    },
+                  ),
+                );
               },
-            ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// Normalize category string for matching (handles "Children's" vs "Childrens", spaces, case).
+  static String _normalizeCategoryForMatch(String s) {
+    if (s.isEmpty) return '';
+    return s
+        .trim()
+        .toLowerCase()
+        .replaceAll("'", '')
+        .replaceAll('\u2019', '') // right single quote
+        .replaceAll('\u2018', '') // left single quote
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  /// Sort products by [sortOrder]: name_asc, name_desc, price_asc, price_desc (uses current price).
+  static List<Product> _sortProducts(List<Product> products, String sortOrder) {
+    final list = List<Product>.from(products);
+    switch (sortOrder) {
+      case 'name_asc':
+        list.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'name_desc':
+        list.sort((a, b) => b.name.compareTo(a.name));
+        break;
+      case 'price_asc':
+        list.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case 'price_desc':
+        list.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      default:
+        list.sort((a, b) => a.name.compareTo(b.name));
+    }
+    return list;
   }
 
   Widget _buildLoadingGrid(bool isGrid) {
@@ -263,9 +358,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         padding: const EdgeInsets.all(16),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 0.75,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
+          childAspectRatio: 0.68,
+          crossAxisSpacing: 14,
+          mainAxisSpacing: 14,
         ),
         itemCount: 6,
         itemBuilder: (_, __) => _buildProductCardShimmer(),
@@ -284,9 +379,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.75,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        childAspectRatio: 0.68,
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 14,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) => _buildProductCard(products[index]),
@@ -367,46 +462,46 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   Positioned(
                     top: 8,
                     right: 8,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: Icon(
-                            isFavorite ? Icons.favorite : Icons.favorite_border,
-                            color: isFavorite ? Colors.red : Colors.white,
-                            size: 22,
-                          ),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.black26,
-                            padding: const EdgeInsets.all(4),
-                            minimumSize: const Size(32, 32),
-                          ),
-                          onPressed: () =>
-                              ref.read(favoritesProvider.notifier).toggle(product.id),
-                        ),
-                        if (!product.inStock) ...[
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'Out of Stock',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ],
+                    child: IconButton(
+                      icon: Icon(
+                        isFavorite ? Icons.favorite : Icons.favorite_border,
+                        color: isFavorite ? Colors.red : Colors.white,
+                        size: 22,
+                      ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black26,
+                        padding: const EdgeInsets.all(4),
+                        minimumSize: const Size(32, 32),
+                      ),
+                      onPressed: () => ref
+                          .read(favoritesProvider.notifier)
+                          .toggle(product.id),
                     ),
                   ),
-                  if (product.onSale && product.regularPrice != null &&
-                      product.regularPrice! > 0 && product.salePrice != null)
+                  if (!product.inStock)
+                    Positioned(
+                      top: 48,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Out of Stock',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  if (product.onSale &&
+                      product.regularPrice != null &&
+                      product.regularPrice! > 0 &&
+                      product.salePrice != null)
                     Positioned(
                       top: 8,
                       left: 8,
@@ -420,9 +515,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         child: Text(
                           _discountPercent(product),
                           style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -442,27 +537,31 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                       decodeHtmlEntities(product.name),
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
-                        fontSize: 14,
+                        fontSize: 13,
+                        height: 1.2,
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 2),
+                    const Spacer(),
                     _buildPriceRow(context, product),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     SizedBox(
                       height: 32,
                       child: FilledButton(
                         onPressed: product.inStock
                             ? () {
                                 ref.read(cartProvider.notifier).add(product.id);
+                                StoreCartApiService.instance
+                                    .addItem(product.id);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
                                         '${decodeHtmlEntities(product.name)} added to cart'),
                                     action: SnackBarAction(
                                       label: 'Cart',
-                                      onPressed: () => context.push(AppRoutes.cart),
+                                      onPressed: () =>
+                                          context.push(AppRoutes.cart),
                                     ),
                                   ),
                                 );
@@ -491,7 +590,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         product.regularPrice! <= 0 ||
         product.salePrice == null) return 'Sale';
     final pct = ((product.regularPrice! - product.salePrice!) /
-            product.regularPrice! * 100)
+            product.regularPrice! *
+            100)
         .round();
     return pct > 0 ? '-$pct%' : 'Sale';
   }
@@ -501,28 +601,29 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     if (product.onSale &&
         product.regularPrice != null &&
         product.salePrice != null) {
-      return Row(
+      return Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        runSpacing: 4,
         children: [
           Text(
             '${product.currency} ${product.salePrice!.toStringAsFixed(2)}',
             style: TextStyle(
               fontWeight: FontWeight.bold,
-              fontSize: 16,
+              fontSize: 15,
               color: theme.colorScheme.primary,
             ),
           ),
-          const SizedBox(width: 8),
           Text(
             '${product.currency} ${product.regularPrice!.toStringAsFixed(2)}',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 13,
               color: Colors.grey[600],
               decoration: TextDecoration.lineThrough,
             ),
           ),
-          const SizedBox(width: 6),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
               color: theme.colorScheme.error,
               borderRadius: BorderRadius.circular(4),
@@ -531,7 +632,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
               'Sale',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -543,7 +644,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       '${product.currency} ${product.price.toStringAsFixed(2)}',
       style: TextStyle(
         fontWeight: FontWeight.bold,
-        fontSize: 16,
+        fontSize: 15,
         color: theme.colorScheme.primary,
       ),
     );
@@ -627,8 +728,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         padding: const EdgeInsets.all(4),
                         minimumSize: const Size(28, 28),
                       ),
-                      onPressed: () =>
-                          ref.read(favoritesProvider.notifier).toggle(product.id),
+                      onPressed: () => ref
+                          .read(favoritesProvider.notifier)
+                          .toggle(product.id),
                     ),
                   ),
                   if (!product.inStock)
@@ -645,8 +747,10 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         ),
                       ),
                     ),
-                  if (product.onSale && product.regularPrice != null &&
-                      product.regularPrice! > 0 && product.salePrice != null)
+                  if (product.onSale &&
+                      product.regularPrice != null &&
+                      product.regularPrice! > 0 &&
+                      product.salePrice != null)
                     Positioned(
                       top: 6,
                       left: 6,
@@ -660,9 +764,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         child: Text(
                           _discountPercent(product),
                           style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold),
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -705,13 +809,16 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         onPressed: product.inStock
                             ? () {
                                 ref.read(cartProvider.notifier).add(product.id);
+                                StoreCartApiService.instance
+                                    .addItem(product.id);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
                                         '${decodeHtmlEntities(product.name)} added to cart'),
                                     action: SnackBarAction(
                                       label: 'Cart',
-                                      onPressed: () => context.push(AppRoutes.cart),
+                                      onPressed: () =>
+                                          context.push(AppRoutes.cart),
                                     ),
                                   ),
                                 );

@@ -52,7 +52,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   }
 
   void _onCategoryTap(BuildContext context, Category category) {
-    ProviderScope.containerOf(context).read(selectedCategoryProvider.notifier).state = category.name;
+    ProviderScope.containerOf(context)
+        .read(selectedCategoryProvider.notifier)
+        .state = category.name;
     context.go(AppRoutes.home);
   }
 
@@ -139,9 +141,13 @@ class _CategoryTileState extends State<_CategoryTile> {
               : const Icon(Icons.chevron_right, size: 20),
           onTap: () {
             if (hasChildren) {
-              setState(() => _expanded = !_expanded);
+              if (_expanded) {
+                widget.onTap(); // Already expanded, now filter
+              } else {
+                setState(() => _expanded = true); // Just expand
+              }
             } else {
-              widget.onTap();
+              widget.onTap(); // No children, filter immediately
             }
           },
         ),

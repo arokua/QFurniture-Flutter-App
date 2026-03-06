@@ -43,14 +43,8 @@ class _SplashScreenState extends State<SplashScreen> {
                   errorBuilder: (_, __, ___) => _buildPlaceholderLogo(),
                 ),
               ),
-              const SizedBox(height: 24),
-              Text(
-                'QFurniture',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-              ),
+              // Brand logo only, as requested
+
             ],
           ),
         ),

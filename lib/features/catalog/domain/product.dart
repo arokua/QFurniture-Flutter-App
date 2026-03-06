@@ -11,12 +11,34 @@ class Variant {
       required this.price,
       required this.inStock});
 
-  factory Variant.fromJson(Map<String, dynamic> j) => Variant(
-        sku: j['sku'] as String,
-        label: j['label'] as String,
-        price: (j['price'] as num).toDouble(),
-        inStock: j['inStock'] as bool,
-      );
+  factory Variant.fromJson(Map<String, dynamic> j) {
+    // Variations in Store API also use a 'prices' object
+    final pObj = j['prices'] as Map<String, dynamic>?;
+    
+    double parsePrice(dynamic v) {
+      if (v == null) return 0.0;
+      double d = 0.0;
+      if (v is num) {
+        d = v.toDouble();
+        return d / 100; // local/API num cents
+      }
+      if (v is String) {
+        d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
+        // If string looks like a large raw number (no dot or .00) it's likely cents
+        if (d >= 100 && (!v.contains('.') || v.endsWith('.0') || v.endsWith('.00'))) {
+          return d / 100;
+        }
+        return d;
+      }
+      return 0.0;
+    }
+    return Variant(
+      sku: (j['sku'] ?? '').toString(),
+      label: (j['label'] ?? j['name'] ?? '').toString(),
+      price: parsePrice(j['price'] ?? pObj?['price'] ?? j['regular_price'] ?? pObj?['regular_price']),
+      inStock: j['inStock'] ?? j['in_stock'] ?? (j['is_in_stock'] ?? true),
+    );
+  }
 }
 
 /// Main catalogue categories used for filtering (same as elsewhere in the app).
@@ -89,18 +111,47 @@ class Product {
 
     final imageList = j['images'] as List?;
     final imageStr = j['image'] as String? ?? '';
-    final rawPrice = j['price'] ?? j['regularPrice'] ?? j['salePrice'];
-    final num? priceNum = rawPrice is num ? rawPrice : null;
-    final double price = priceNum != null ? (priceNum / 100).toDouble() : 0.0;
-    final rawReg = j['regularPrice'];
-    final num? regNum = rawReg is num ? rawReg : null;
-    final double? regularPrice =
-        regNum != null ? (regNum / 100).toDouble() : null;
-    final rawSale = j['salePrice'];
-    final num? saleNum = rawSale is num ? rawSale : null;
-    final double? salePrice =
-        saleNum != null ? (saleNum / 100).toDouble() : null;
-    final bool onSale = j['onSale'] as bool? ?? false;
+    double parsePriceField(dynamic v) {
+      if (v == null) return 0.0;
+      double? d;
+      if (v is num) {
+        d = v.toDouble();
+        return (d ?? 0.0) / 100; // local products.json: e.g. 48495.0 -> 484.95
+      }
+      if (v is String) {
+        d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), ''));
+        if (d == null) return 0.0;
+        // If string looks like a large raw number (no dot or .00) it's likely cents
+        if (d >= 100 && (!v.contains('.') || v.endsWith('.0') || v.endsWith('.00'))) {
+          return d / 100;
+        }
+        return d;
+      }
+      return 0.0;
+    }
+
+    // Price logic handles local JSON (root keys) and WC Store API (nested 'prices' object)
+    final pricesObj = j['prices'] as Map<String, dynamic>?;
+    
+    final rawPrice = j['price'] ?? 
+                     pricesObj?['price'] ?? 
+                     j['regularPrice'] ?? 
+                     pricesObj?['regular_price'] ?? 
+                     j['salePrice'] ?? 
+                     pricesObj?['sale_price'] ??
+                     j['regular_price'] ??
+                     j['sale_price'];
+                     
+    final double price = parsePriceField(rawPrice);
+    
+    final rawReg = j['regularPrice'] ?? pricesObj?['regular_price'] ?? j['regular_price'];
+    final double? regularPrice = rawReg != null ? parsePriceField(rawReg) : null;
+    
+    final rawSale = j['salePrice'] ?? pricesObj?['sale_price'] ?? j['sale_price'];
+    final double? salePrice = rawSale != null ? parsePriceField(rawSale) : null;
+    
+    final bool onSale = j['onSale'] ?? j['on_sale'] ?? (salePrice != null && regularPrice != null && salePrice < regularPrice);
+    final String currency = j['currency'] as String? ?? pricesObj?['currency_code'] as String? ?? 'AUD';
 
     // categoryList: from categories array (strings or {name: "x"}) or split category string; decode HTML entities
     List<String> categoryList = [];
@@ -132,11 +183,47 @@ class Product {
             ? skuVal.toString().trim()
             : id.toString();
 
-    List<String> imagesParsed = imageStr.isNotEmpty ? [imageStr] : [];
+    // Attributes from WooCommerce Store API (pa_material, pa_color, etc.)
+    String? apiMaterial;
+    String? apiColor;
+    String? apiAssembly;
+    final attrs = j['attributes'] as List?;
+    if (attrs != null) {
+      for (final a in attrs) {
+        if (a is Map) {
+          final slug = a['slug']?.toString().toLowerCase() ?? '';
+          final terms = a['terms'] as List?;
+          final firstTerm = (terms != null && terms.isNotEmpty) ? terms.first : null;
+          final value = (firstTerm is Map) ? firstTerm['name']?.toString() : null;
+          
+          if (slug == 'pa_material') apiMaterial = value;
+          if (slug == 'pa_color') apiColor = value;
+          if (slug == 'pa_assembly_required') apiAssembly = value;
+        }
+      }
+    }
+
+    // Handle WooCommerce API standard format where image is { id: ..., src: "https://..." }
+    String mainImageStr = '';
+    final jImage = j['image'] ?? j['images']?.first; // Sometimes main image is just in images array
+    if (jImage is String) {
+      mainImageStr = jImage;
+    } else if (jImage is Map && jImage['src'] != null) {
+      mainImageStr = jImage['src'].toString();
+    }
+
+    List<String> imagesParsed = mainImageStr.isNotEmpty ? [mainImageStr] : [];
     if (imageList != null && imageList.isNotEmpty) {
-      imagesParsed = imageList.map((e) => e.toString()).toList();
-      if (imageStr.isNotEmpty && !imagesParsed.contains(imageStr)) {
-        imagesParsed = [imageStr, ...imagesParsed];
+      imagesParsed = [];
+      for (final e in imageList) {
+        if (e is String) {
+          imagesParsed.add(e);
+        } else if (e is Map && e['src'] != null) {
+          imagesParsed.add(e['src'].toString());
+        }
+      }
+      if (mainImageStr.isNotEmpty && !imagesParsed.contains(mainImageStr)) {
+        imagesParsed = [mainImageStr, ...imagesParsed];
       }
     }
 
@@ -148,8 +235,8 @@ class Product {
           .toList();
     } catch (_) {}
 
-    // Assembly: Homewares → No, else Yes (or from JSON)
-    String assemblyRequired = (j['assemblyRequired'] as String? ?? '').trim();
+    // Assembly: Homewares → No, else Yes (or from JSON or API attribute)
+    String assemblyRequired = (j['assemblyRequired'] as String? ?? apiAssembly ?? '').trim();
     if (assemblyRequired.isEmpty) {
       final isHomeware = categoryList
           .any((c) => c.toLowerCase().contains('homeware'));
@@ -157,11 +244,15 @@ class Product {
     }
 
     // Material: default Rubberwood for Children's Furniture if missing
-    String? material = (j['material'] as String? ?? '').trim();
+    String? material = (j['material'] as String? ?? apiMaterial ?? '').trim();
     if (material.isEmpty) material = null;
     final isChildren = categoryList
         .any((c) => c.toLowerCase().contains("children"));
     if (isChildren && material == null) material = 'Rubberwood';
+
+    // Stock mapping for Store API
+    final bool apiInStock = j['is_in_stock'] ?? (j['stock_status'] == 'instock');
+    final apiStockAmount = j['stock_quantity']?.toString();
 
     return Product(
       id: id,
@@ -170,24 +261,24 @@ class Product {
       regularPrice: regularPrice,
       salePrice: salePrice,
       onSale: onSale,
-      currency: j['currency'] as String? ?? 'AUD',
+      currency: currency,
       image: imageStr,
       images: imagesParsed,
-      inStock: j['inStock'] as bool? ?? true,
-      stockAmount: (j['stockAmount'] as String? ?? '').trim().isEmpty
-          ? null
-          : (j['stockAmount'] as String? ?? '').trim(),
+      inStock: j['inStock'] ?? apiInStock,
+      stockAmount: (j['stockAmount'] as String? ?? '').trim().isNotEmpty
+          ? (j['stockAmount'] as String? ?? '').trim()
+          : (apiStockAmount != null ? "$apiStockAmount in stock" : null),
       category: category,
       categoryList: categoryList,
       age: decodeHtmlEntities(j['age'] as String? ?? ''),
-      description: decodeHtmlEntities(j['description'] as String? ?? ''),
+      description: decodeHtmlEntities(j['description'] as String? ?? j['short_description'] as String? ?? ''),
       sku: skuResolved,
       variants: variantsParsed,
       material: material,
       assemblyRequired: assemblyRequired,
-      color: (j['color'] as String? ?? '').trim().isEmpty
+      color: (j['color'] as String? ?? apiColor ?? '').trim().isEmpty
           ? null
-          : (j['color'] as String? ?? '').trim(),
+          : (j['color'] as String? ?? apiColor ?? '').trim(),
       weight: (j['weight'] as String? ?? '').trim().isEmpty
           ? null
           : (j['weight'] as String? ?? '').trim(),

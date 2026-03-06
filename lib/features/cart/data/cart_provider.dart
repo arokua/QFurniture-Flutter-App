@@ -1,8 +1,52 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../config/store_cart_api_service.dart';
 import '../domain/cart_item.dart';
 
 class CartNotifier extends StateNotifier<List<CartItem>> {
-  CartNotifier() : super([]);
+  CartNotifier() : super([]) {
+    _loadCart();
+  }
+
+  static const _key = 'cart_items';
+
+  Future<void> _loadCart() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key);
+    if (raw != null) {
+      try {
+        final list = jsonDecode(raw) as List<dynamic>;
+        state = list.map((e) => CartItem(
+          productId: e['productId'] as int,
+          quantity: e['quantity'] as int,
+        )).toList();
+      } catch (_) {}
+    }
+    
+    // Remote sync: if we have a session, fetch remote items to ensure sync
+    if (StoreCartApiService.instance.hasSession) {
+      final remoteItems = await StoreCartApiService.instance.getItems();
+      if (remoteItems.isNotEmpty) {
+        // Merge strategy: remote takes precedence or merge based on ID
+        // For simplicity here, let's use the remote state as source of truth if session exists
+        state = remoteItems.map((e) => CartItem(
+          productId: e.id,
+          quantity: e.quantity,
+        )).toList();
+        _saveCart();
+      }
+    }
+  }
+
+  Future<void> _saveCart() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonEncode(state.map((e) => {
+      'productId': e.productId,
+      'quantity': e.quantity,
+    }).toList());
+    await prefs.setString(_key, raw);
+  }
 
   void add(int productId, {int quantity = 1}) {
     final i = state.indexWhere((e) => e.productId == productId);
@@ -15,6 +59,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     } else {
       state = [...state, CartItem(productId: productId, quantity: quantity)];
     }
+    _saveCart();
   }
 
   void setQuantity(int productId, int quantity) {
@@ -29,15 +74,18 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
         state[i].copyWith(quantity: quantity),
         ...state.sublist(i + 1),
       ];
+      _saveCart();
     }
   }
 
   void remove(int productId) {
     state = state.where((e) => e.productId != productId).toList();
+    _saveCart();
   }
 
   void clear() {
     state = [];
+    _saveCart();
   }
 }
 

@@ -63,9 +63,8 @@ String resolveAssetPath(String? path) {
 /// The bundle must have keys "products/..." (add products/ dirs in pubspec; symlink products -> assets/products).
 String assetKeyForImage(String path) {
   if (path.isEmpty) return path;
-  if (kIsWeb && path.startsWith('assets/')) {
-    return path.substring(7);
-  }
+  // Standard Flutter assets usually need the "assets/" prefix even on Web
+  // if you haven't explicitly moved them to root during a custom build.
   return path;
 }
 

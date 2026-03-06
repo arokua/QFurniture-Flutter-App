@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../data/favorites_provider.dart';
@@ -111,10 +112,13 @@ class _FavoriteProductTile extends StatelessWidget {
                   width: 80,
                   height: 80,
                   child: isUrl
-                      ? Image.network(
-                          product.primaryImage,
+                      ? CachedNetworkImage(
+                          imageUrl: product.primaryImage,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
+                          placeholder: (context, url) => Container(
+                            color: Colors.grey[200],
+                          ),
+                          errorWidget: (context, url, error) =>
                               Icon(Icons.image_not_supported,
                                   color: Colors.grey[400]),
                         )

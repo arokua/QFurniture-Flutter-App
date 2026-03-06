@@ -27,9 +27,12 @@ class StoreLinkService {
 
   static Future<bool> _launch(String url) async {
     final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
+    try {
+      // On Android 11+, canLaunchUrl can be false without <queries> in manifest;
+      // we still try launchUrl so the browser can open (manifest has https/http queries).
       return launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
     }
-    return false;
   }
 }
