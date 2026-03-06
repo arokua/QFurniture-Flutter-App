@@ -192,7 +192,7 @@ def main():
         encoding="utf-8",
     )
 
-    print(f"✓ Saved JSON with image URLs → {OUT_FILE}")
+    print(f"Saved JSON with image URLs -> {OUT_FILE}")
     print("  Run: python download_product_images.py  to download images and update paths.")
 
 
