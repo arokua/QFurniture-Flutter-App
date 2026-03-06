@@ -1,7 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.quinns.qfurniture">
+    <!-- Required for url_launcher on Android 11+ (package visibility); without this, canLaunchUrl returns false and links won't open -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
    <application
-        android:label="flutter_ecommerce_template"
+        android:label="QFurniture"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

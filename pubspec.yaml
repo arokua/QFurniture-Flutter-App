@@ -41,6 +41,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.2
+  shared_preferences: ^2.5.4
 
 dev_dependencies:
   flutter_test:
@@ -65,224 +66,395 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/data/
+    - assets/data/products.json
+    - assets/dummy_data.json
     - assets/images/
-    # Product images (each subdirectory must be listed; Flutter does not recurse)
     - assets/products/031/
+    - assets/products/031/gallery/
     - assets/products/031071/
+    - assets/products/031071/gallery/
     - assets/products/031089/
+    - assets/products/031089/gallery/
     - assets/products/032042/
+    - assets/products/032042/gallery/
     - assets/products/033/
     - assets/products/033091/
     - assets/products/041/
+    - assets/products/041/gallery/
     - assets/products/042/
+    - assets/products/042/gallery/
     - assets/products/044/
+    - assets/products/044/gallery/
     - assets/products/055/
     - assets/products/058/
+    - assets/products/058/gallery/
     - assets/products/059/
     - assets/products/069/
     - assets/products/071/
+    - assets/products/071/gallery/
     - assets/products/086/
+    - assets/products/086/gallery/
     - assets/products/089/
+    - assets/products/089/gallery/
     - assets/products/091/
+    - assets/products/091/gallery/
     - assets/products/1051/
+    - assets/products/1051/gallery/
     - assets/products/1052/
+    - assets/products/1052/gallery/
     - assets/products/1053/
+    - assets/products/1053/gallery/
     - assets/products/1055/
+    - assets/products/1055/gallery/
     - assets/products/1057/
+    - assets/products/1057/gallery/
     - assets/products/1058/
-    - assets/products/1062/
-    - assets/products/1062.1/
+    - assets/products/1058/gallery/
+    - assets/products/1062.1/gallery/
     - assets/products/1062.6/
+    - assets/products/1062.6/gallery/
+    - assets/products/1062/
+    - assets/products/1062/gallery/
     - assets/products/1063/
-    - assets/products/10631115-6/
+    - assets/products/1063/gallery/
     - assets/products/10631115-6-1/
+    - assets/products/10631115-6-1/gallery/
+    - assets/products/10631115-6/
+    - assets/products/10631115-6/gallery/
     - assets/products/1064/
+    - assets/products/1064/gallery/
     - assets/products/1064_1115_2/
+    - assets/products/1064_1115_2/gallery/
     - assets/products/1064_1115_4/
-    - assets/products/1065/
+    - assets/products/1064_1115_4/gallery/
     - assets/products/1065.1/
+    - assets/products/1065.1/gallery/
+    - assets/products/1065/
+    - assets/products/1065/gallery/
+    - assets/products/1065_eve/
+    - assets/products/1065_eve/gallery/
     - assets/products/1065_eve_2/
+    - assets/products/1065_eve_2/gallery/
     - assets/products/1066/
-    - assets/products/1067/
+    - assets/products/1066/gallery/
     - assets/products/1067.1/
+    - assets/products/1067.1/gallery/
+    - assets/products/1067/
     - assets/products/1073/
+    - assets/products/1073/gallery/
     - assets/products/10731074-2/
+    - assets/products/10731074-2/gallery/
     - assets/products/10731074-4/
+    - assets/products/10731074-4/gallery/
     - assets/products/10731075-2/
+    - assets/products/10731075-2/gallery/
     - assets/products/10731075-4/
+    - assets/products/10731075-4/gallery/
+    - assets/products/1074.2/
+    - assets/products/1074.2/gallery/
     - assets/products/1074/
     - assets/products/1075/
+    - assets/products/1075/gallery/
     - assets/products/1083/
+    - assets/products/1083/gallery/
     - assets/products/10831074-4/
+    - assets/products/10831074-4/gallery/
     - assets/products/10831074-6/
+    - assets/products/10831074-6/gallery/
     - assets/products/10831075-4/
+    - assets/products/10831075-4/gallery/
     - assets/products/10831075-6/
+    - assets/products/10831075-6/gallery/
     - assets/products/110/
+    - assets/products/110/gallery/
     - assets/products/110041/
+    - assets/products/110041/gallery/
     - assets/products/110071/
     - assets/products/1104/
+    - assets/products/1104/gallery/
     - assets/products/123/
+    - assets/products/123/gallery/
     - assets/products/123042/
+    - assets/products/123042/gallery/
     - assets/products/123069/
+    - assets/products/123069/gallery/
     - assets/products/124/
+    - assets/products/124/gallery/
     - assets/products/124041/
+    - assets/products/124041/gallery/
     - assets/products/124071/
+    - assets/products/124071/gallery/
     - assets/products/125/
+    - assets/products/125/gallery/
     - assets/products/128/
+    - assets/products/128/gallery/
     - assets/products/128041/
+    - assets/products/128041/gallery/
     - assets/products/128071/
+    - assets/products/128071/gallery/
     - assets/products/128089/
+    - assets/products/128089/gallery/
     - assets/products/129/
+    - assets/products/129/gallery/
     - assets/products/129042/
+    - assets/products/129042/gallery/
     - assets/products/129069/
+    - assets/products/129069/gallery/
     - assets/products/132/
+    - assets/products/132/gallery/
     - assets/products/132042/
     - assets/products/132069/
     - assets/products/133/
+    - assets/products/133/gallery/
     - assets/products/133108/
     - assets/products/134/
+    - assets/products/134/gallery/
     - assets/products/134042/
+    - assets/products/134042/gallery/
     - assets/products/134069/
+    - assets/products/134069/gallery/
     - assets/products/139142/
+    - assets/products/139142/gallery/
     - assets/products/148/
     - assets/products/219/
+    - assets/products/219/gallery/
     - assets/products/240/
     - assets/products/321/
+    - assets/products/321/gallery/
     - assets/products/322/
+    - assets/products/322/gallery/
     - assets/products/33630/
     - assets/products/33698/
     - assets/products/345/
+    - assets/products/345/gallery/
     - assets/products/354/
+    - assets/products/354/gallery/
     - assets/products/355/
+    - assets/products/355/gallery/
     - assets/products/360/
+    - assets/products/360/gallery/
     - assets/products/392/
+    - assets/products/392/gallery/
     - assets/products/393/
+    - assets/products/393/gallery/
     - assets/products/398/
+    - assets/products/398/gallery/
     - assets/products/41368/
+    - assets/products/41368/gallery/
     - assets/products/427/
     - assets/products/427431/
+    - assets/products/427431/gallery/
     - assets/products/428/
+    - assets/products/428/gallery/
     - assets/products/428432/
+    - assets/products/428432/gallery/
     - assets/products/431/
+    - assets/products/431/gallery/
     - assets/products/432/
+    - assets/products/432/gallery/
     - assets/products/468/
+    - assets/products/468/gallery/
     - assets/products/542/
+    - assets/products/542/gallery/
     - assets/products/545/
+    - assets/products/545/gallery/
     - assets/products/545535/
+    - assets/products/545535/gallery/
     - assets/products/546/
+    - assets/products/546/gallery/
     - assets/products/549/
+    - assets/products/549/gallery/
     - assets/products/700_701_702_703_704_705/
+    - assets/products/700_701_702_703_704_705/gallery/
     - assets/products/707/
+    - assets/products/707/gallery/
     - assets/products/708/
+    - assets/products/708/gallery/
     - assets/products/709-710-711/
+    - assets/products/709-710-711/gallery/
     - assets/products/714/
+    - assets/products/714/gallery/
     - assets/products/719/
+    - assets/products/719/gallery/
     - assets/products/720/
+    - assets/products/720/gallery/
     - assets/products/721/
-    - assets/products/722/
+    - assets/products/721/gallery/
     - assets/products/724/
+    - assets/products/724/gallery/
     - assets/products/726-727/
+    - assets/products/726-727/gallery/
     - assets/products/728-729/
+    - assets/products/728-729/gallery/
     - assets/products/730/
+    - assets/products/730/gallery/
     - assets/products/732/
+    - assets/products/732/gallery/
     - assets/products/733/
+    - assets/products/733/gallery/
     - assets/products/734/
+    - assets/products/734/gallery/
     - assets/products/735/
+    - assets/products/735/gallery/
     - assets/products/738/
+    - assets/products/738/gallery/
     - assets/products/739-bundle/
+    - assets/products/739-bundle/gallery/
     - assets/products/742-bundle/
+    - assets/products/742-bundle/gallery/
     - assets/products/744-bundle/
+    - assets/products/744-bundle/gallery/
     - assets/products/745-bundle/
+    - assets/products/745-bundle/gallery/
     - assets/products/746/
+    - assets/products/746/gallery/
     - assets/products/747/
-    - assets/products/748/
+    - assets/products/747/gallery/
     - assets/products/748-bundle/
+    - assets/products/748/
+    - assets/products/748/gallery/
     - assets/products/749-bundle/
     - assets/products/750-bundle/
+    - assets/products/750-bundle/gallery/
     - assets/products/752-bundle/
     - assets/products/755-bundle/
+    - assets/products/755-bundle/gallery/
     - assets/products/756/
+    - assets/products/756/gallery/
     - assets/products/758/
     - assets/products/759-bundle/
+    - assets/products/759-bundle/gallery/
     - assets/products/760-bundle/
+    - assets/products/760-bundle/gallery/
     - assets/products/761-bundle/
     - assets/products/762-bundle/
     - assets/products/763/
     - assets/products/764-Bundle/
+    - assets/products/764-Bundle/gallery/
     - assets/products/765/
     - assets/products/767/
+    - assets/products/767/gallery/
     - assets/products/769/
+    - assets/products/769/gallery/
     - assets/products/770/
+    - assets/products/770/gallery/
     - assets/products/772/
+    - assets/products/772/gallery/
     - assets/products/773/
+    - assets/products/773/gallery/
     - assets/products/775/
+    - assets/products/775/gallery/
     - assets/products/778-bundle/
     - assets/products/779/
+    - assets/products/779/gallery/
     - assets/products/780/
+    - assets/products/780/gallery/
     - assets/products/784/
     - assets/products/785/
+    - assets/products/785/gallery/
     - assets/products/786/
     - assets/products/787/
+    - assets/products/787/gallery/
     - assets/products/789/
+    - assets/products/789/gallery/
     - assets/products/790/
+    - assets/products/790/gallery/
     - assets/products/791/
+    - assets/products/791/gallery/
     - assets/products/792/
+    - assets/products/792/gallery/
     - assets/products/794/
-    - assets/products/795/
-    - assets/products/796/
+    - assets/products/794/gallery/
     - assets/products/797/
+    - assets/products/797/gallery/
     - assets/products/798/
+    - assets/products/798/gallery/
     - assets/products/800/
+    - assets/products/800/gallery/
     - assets/products/802/
+    - assets/products/802/gallery/
     - assets/products/8020/
     - assets/products/803/
+    - assets/products/803/gallery/
     - assets/products/8030/
+    - assets/products/8030/gallery/
     - assets/products/805/
+    - assets/products/805/gallery/
     - assets/products/806/
     - assets/products/830/
+    - assets/products/830/gallery/
     - assets/products/832/
     - assets/products/833/
+    - assets/products/833/gallery/
     - assets/products/834/
+    - assets/products/834/gallery/
     - assets/products/840/
+    - assets/products/840/gallery/
     - assets/products/841/
     - assets/products/842/
+    - assets/products/842/gallery/
     - assets/products/865/
+    - assets/products/865/gallery/
     - assets/products/ESP-U-EVE/
     - assets/products/ESP___8211__3_EVE/
+    - assets/products/ESP___8211__3_EVE/gallery/
     - assets/products/MAC-DIR-SET-3/
+    - assets/products/MAC-DIR-SET-3/gallery/
     - assets/products/QF-ARI-3PCE/
+    - assets/products/QF-ARI-3PCE/gallery/
     - assets/products/QF-ARI-SOFA-1__02_ABWH/
-    - assets/products/QF-BE-2/
+    - assets/products/QF-ARI-SOFA-1__02_ABWH/gallery/
+    - assets/products/QF-BE-2/gallery/
     - assets/products/QF-CLA-1SF/
+    - assets/products/QF-CLA-1SF/gallery/
     - assets/products/QF-CLA-2SF/
+    - assets/products/QF-CLA-2SF/gallery/
     - assets/products/QF-CLA-C12/
+    - assets/products/QF-CLA-C12/gallery/
     - assets/products/QF-CLA-SET-3/
+    - assets/products/QF-CLA-SET-3/gallery/
     - assets/products/QF-CLA-SET-4/
-    - assets/products/QF-DIR01_23/
+    - assets/products/QF-CLA-SET-4/gallery/
     - assets/products/QF-DRC-ST-2/
+    - assets/products/QF-DRC-ST-2/gallery/
     - assets/products/QF-ESP-2/
+    - assets/products/QF-ESP-2/gallery/
     - assets/products/QF-ESP-3/
     - assets/products/QF-ESP-8F/
     - assets/products/QF-ESP-U/
+    - assets/products/QF-ESP-U/gallery/
     - assets/products/QF-EVE-2DIR/
     - assets/products/QF-EVE-DIR/
-    - assets/products/QF-EVT-_SF/
+    - assets/products/QF-EVE-DIR/gallery/
+    - assets/products/QF-EVT-_SF/gallery/
     - assets/products/QF-MAC-ADSW/
+    - assets/products/QF-MAC-ADSW/gallery/
     - assets/products/QF-MAC-BC/
+    - assets/products/QF-MAC-BC/gallery/
     - assets/products/QF-MAC-FOLT/
+    - assets/products/QF-MAC-FOLT/gallery/
     - assets/products/QF-MAC-KISW/
+    - assets/products/QF-MAC-KISW/gallery/
     - assets/products/QF-MBC-SET-2/
-    - assets/products/QF-PAR-C10/
+    - assets/products/QF-PAR-C10/gallery/
     - assets/products/QF-PAR-FOF/
+    - assets/products/QF-PAR-FOF/gallery/
     - assets/products/QF-PAR-SET-2/
     - assets/products/QF-PAR-SET-3/
+    - assets/products/QF-PAR-SET-3/gallery/
     - assets/products/QF-PAR-SF-1/
+    - assets/products/QF-PAR-SF-1/gallery/
     - assets/products/QF-PRB13/
+    - assets/products/QF-PRB13/gallery/
+    - assets/products/QF-SAG_02-1S/
+    - assets/products/QF-SAG_02-1S/gallery/
     - assets/products/QF-SAG_02-2S/
+    - assets/products/QF-SAG_02-2S/gallery/
     - assets/products/QF-SAG_02-C12/
+    - assets/products/QF-SAG_02-C12/gallery/
     - assets/products/QF-SAI-4PC/
-    - assets/products/QF-ST-STOOL-WH/
+    - assets/products/QF-SAI-4PC/gallery/
     - assets/products/QF-ST-STOOL-WH-1/
-    - assets/data/
-    - assets/data/products.json
-    - assets/dummy_data.json
+    - assets/products/QF-ST-STOOL-WH-1/gallery/
+    - assets/products/QF-ST-STOOL-WH/

@@ -1,4 +1,4 @@
-package com.example.flutter_ecommerce_template
+package com.quinns.qfurniture
 
 import io.flutter.embedding.android.FlutterActivity
 
