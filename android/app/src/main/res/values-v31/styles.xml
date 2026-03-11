@@ -1,0 +1,14 @@
+hmm,<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Theme applied to the Android Window while the process is starting on Android 12+ -->
+    <style name="LaunchTheme" parent="@android:style/Theme.SplashScreen">
+        <item name="android:windowSplashScreenBackground">@color/brand_brown</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/launch_logo</item>
+        <item name="postSplashScreenTheme">@style/NormalTheme</item>
+    </style>
+
+    <!-- Normal theme after splash screen -->
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

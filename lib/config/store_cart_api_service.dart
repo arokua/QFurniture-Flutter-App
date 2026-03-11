@@ -44,15 +44,21 @@ class StoreCartApiService {
   /// Add item to store cart (creates session; save cookie from response).
   Future<bool> addItem(int productId, {int quantity = 1}) async {
     try {
-      final uri =
-          Uri.parse('$_base/cart/items?id=$productId&quantity=$quantity');
-      final res = await http.post(uri, headers: _headers).timeout(
-            const Duration(seconds: 15),
-          );
+      final res = await http
+          .post(
+            _cartItems,
+            headers: _headers,
+            body: jsonEncode({
+              'id': productId,
+              'quantity': quantity,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
       if (res.statusCode >= 200 && res.statusCode < 300) {
         await setCookieFromResponse(res);
         return true;
       }
+      // If error, maybe capture error message for debugging
       await setCookieFromResponse(res);
       return false;
     } catch (_) {

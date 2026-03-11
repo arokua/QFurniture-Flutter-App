@@ -430,7 +430,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () => context.push(AppRoutes.product(product.id)),
+        onTap: () => _showQuickView(context, product, ref),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -545,35 +545,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     ),
                     const Spacer(),
                     _buildPriceRow(context, product),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      height: 32,
-                      child: FilledButton(
-                        onPressed: product.inStock
-                            ? () {
-                                ref.read(cartProvider.notifier).add(product.id);
-                                StoreCartApiService.instance
-                                    .addItem(product.id);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        '${decodeHtmlEntities(product.name)} added to cart'),
-                                    action: SnackBarAction(
-                                      label: 'Cart',
-                                      onPressed: () =>
-                                          context.push(AppRoutes.cart),
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: Size.zero,
-                        ),
-                        child: const Text('Add to cart'),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -685,7 +656,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () => context.push(AppRoutes.product(product.id)),
+        onTap: () => _showQuickView(context, product, ref),
         child: Row(
           children: [
             // Product Image
@@ -802,35 +773,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     ],
                     const SizedBox(height: 4),
                     _buildPriceRow(context, product),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      height: 32,
-                      child: FilledButton(
-                        onPressed: product.inStock
-                            ? () {
-                                ref.read(cartProvider.notifier).add(product.id);
-                                StoreCartApiService.instance
-                                    .addItem(product.id);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        '${decodeHtmlEntities(product.name)} added to cart'),
-                                    action: SnackBarAction(
-                                      label: 'Cart',
-                                      onPressed: () =>
-                                          context.push(AppRoutes.cart),
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: Size.zero,
-                        ),
-                        child: const Text('Add to cart'),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -904,6 +846,253 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showQuickView(BuildContext context, Product product, WidgetRef ref) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => _QuickViewModal(product: product),
+  );
+}
+
+class _QuickViewModal extends ConsumerStatefulWidget {
+  final Product product;
+  const _QuickViewModal({required this.product});
+
+  @override
+  ConsumerState<_QuickViewModal> createState() => _QuickViewModalState();
+}
+
+class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
+  int _quantity = 1;
+
+  String _imagePath(Product p) {
+    if (isImageUrl(p.primaryImage)) return p.primaryImage;
+    if (p.image.isNotEmpty && !isImageUrl(p.image)) {
+      return normalizeAssetPath(p.image);
+    }
+    final ext = extensionFromPath(p.image.isNotEmpty
+        ? p.image
+        : p.images.isNotEmpty
+            ? p.images.first
+            : null);
+    return normalizeAssetPath(productMainImagePath(p.sku, p.id, ext: ext));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = widget.product;
+    final imagePath = _imagePath(p);
+    final isUrl = isImageUrl(p.primaryImage);
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+      ),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 100,
+                  height: 100,
+                  child: isUrl
+                      ? CachedNetworkImage(
+                          imageUrl: p.primaryImage,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) =>
+                              Container(color: Colors.grey[200]),
+                          errorWidget: (context, url, error) => const Icon(
+                            Icons.image_not_supported,
+                            color: Colors.grey,
+                          ),
+                        )
+                      : Image.asset(
+                          assetKeyForImage(imagePath),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.image_not_supported,
+                            color: Colors.grey,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      decodeHtmlEntities(p.name),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${p.currency} ${p.price.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (!p.inStock)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Out of Stock',
+                          style: TextStyle(
+                              color: Colors.red.shade700,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12),
+                        ),
+                      )
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Quantity',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove, size: 20),
+                      onPressed: _quantity > 1
+                          ? () => setState(() => _quantity--)
+                          : null,
+                    ),
+                    Text(
+                      '$_quantity',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 20),
+                      onPressed: p.inStock
+                          ? () => setState(() => _quantity++)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    context.push(
+                      AppRoutes.product(p.id),
+                      extra: p,
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('View Details'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  onPressed: p.inStock
+                      ? () {
+                          ref
+                              .read(cartProvider.notifier)
+                              .add(p.id, quantity: _quantity);
+                          StoreCartApiService.instance
+                              .addItem(p.id, quantity: _quantity);
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                              action: SnackBarAction(
+                                label: 'View Cart',
+                                onPressed: () => context.push(AppRoutes.cart),
+                              ),
+                            ),
+                          );
+                        }
+                      : null,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.shopping_bag_outlined),
+                  label: const Text('Add to Cart'),
+                ),
+              ),
+            ],
           ),
         ],
       ),

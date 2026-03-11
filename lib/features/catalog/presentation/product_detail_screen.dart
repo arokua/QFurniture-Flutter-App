@@ -9,6 +9,7 @@ import '../../../app_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_link_service.dart';
 import '../../cart/data/cart_provider.dart';
+import '../domain/product.dart';
 import 'package:go_router/go_router.dart';
 import '../data/product_remote_datasource.dart';
 import '../../cart/presentation/cart_screen.dart';
@@ -59,23 +60,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           );
         }
 
-        // Silent sync - update provider data if it changed
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          if (!mounted) return;
-          try {
-            final remoteSource = ref.read(productRemoteProvider);
-            final freshP = await remoteSource.fetchById(widget.productId);
-            // In a full Riverpod setup, we'd update a StateNotifier.
-            // For now, if stock or price changed significantly, we update local state.
-            if (freshP != null && (freshP.inStock != p.inStock || freshP.price != p.price)) {
-               // Update UI state silently if needed here...
-               // For this demo structure, if we used a Stream/Notifier it would auto-rebuild.
-            }
-          } catch (_) {
-            // Ignore fetch errors to keep user experience smooth
-          }
-        });
-
+        // Silent background sync removed for stability. 
+        // ProductRepository.getById already does the remote fetch.
+        
         final decodedName = decodeHtmlEntities(p.name);
         return Scaffold(
           body: CustomScrollView(
@@ -154,31 +141,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        // Price (with badges) and Stock
+        // Price
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _buildDetailPrice(theme, p),
-            Row(
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: p.inStock ? Colors.green : Colors.red,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            Expanded(child: _buildDetailPrice(theme, p)),
           ],
         ),
         const SizedBox(height: 16),
@@ -196,6 +163,22 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   avatar: const Icon(Icons.qr_code, size: 18),
                   label: Text('SKU: ${p.sku}'),
                 ),
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: p.inStock ? Colors.green : Colors.red,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -277,6 +260,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       SnackBar(
                         content:
                             Text('${decodeHtmlEntities(p.name)} added to cart'),
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
                         action: SnackBarAction(
                           label: 'View Cart',
                           onPressed: () => context.push(AppRoutes.cart),
@@ -301,9 +287,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             if (!context.mounted) return;
             if (!ok) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
+                SnackBar(
+                  content: const Text(
                       'Could not open store. Visit qfurniture.com.au to buy.'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
                 ),
               );
             }
@@ -634,6 +623,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         _ImageGalleryIndicator(
           count: count,
           currentIndex: _selectedImageIndex,
+          onTap: (index) {
+            _pageController.animateToPage(
+              index,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          },
         ),
       ],
     );
@@ -692,10 +688,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 class _ImageGalleryIndicator extends StatelessWidget {
   final int count;
   final int currentIndex;
+  final void Function(int) onTap;
 
   const _ImageGalleryIndicator({
     required this.count,
     required this.currentIndex,
+    required this.onTap,
   });
 
   @override
@@ -709,17 +707,21 @@ class _ImageGalleryIndicator extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: List.generate(
           count,
-          (index) => Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: currentIndex == index ? 24 : 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: currentIndex == index
-                    ? Colors.white
-                    : Colors.white.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(4),
+          (index) => GestureDetector(
+            onTap: () => onTap(index),
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 8.0),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: currentIndex == index ? 24 : 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: currentIndex == index
+                      ? Colors.white
+                      : Colors.white.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
             ),
           ),

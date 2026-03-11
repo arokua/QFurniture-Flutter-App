@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../domain/product.dart';
 import '../../../../config/store_config.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+final productRemoteProvider = Provider((ref) => ProductRemoteDataSource());
 
 class ProductRemoteDataSource {
   static const String _endpoint = '$kStoreBaseUrl/wp-json/wc/store/v1/products';

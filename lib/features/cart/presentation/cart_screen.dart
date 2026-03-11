@@ -7,6 +7,7 @@ import '../../../config/store_link_service.dart';
 import '../../catalog/data/product_repository.dart';
 import '../../catalog/domain/product.dart';
 import '../../catalog/utils/asset_path.dart';
+import '../../catalog/utils/html_utils.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
 import '../domain/cart_item.dart';
@@ -58,29 +59,23 @@ class CartScreen extends ConsumerWidget {
             onPressed: () async {
               ref.read(cartProvider.notifier).clear();
               await StoreCartApiService.instance.clearCart();
-              await StoreCartApiService.instance.clearSession();
             },
-            child: const Text('Clear'),
+            child: const Text('Clear All'),
           ),
         ],
       ),
       body: Column(
         children: [
           Expanded(
-            child: FutureBuilder<List<Product?>>(
-              future: Future.wait(cart.map((e) => repo.getById(e.productId))),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final products = snapshot.data!;
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: cart.length,
-                  itemBuilder: (context, index) {
-                    final item = cart[index];
-                    final product =
-                        index < products.length ? products[index] : null;
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: cart.length,
+              itemBuilder: (context, index) {
+                final item = cart[index];
+                return FutureBuilder<Product?>(
+                  future: repo.getById(item.productId),
+                  builder: (context, snap) {
+                    final product = snap.data;
                     return _CartListItem(
                       item: item,
                       product: product,
@@ -89,12 +84,12 @@ class CartScreen extends ConsumerWidget {
                         StoreCartApiService.instance
                             .removeItemByProductId(item.productId);
                       },
-                      onQuantityChanged: (q) {
+                      onQuantityChanged: (newQty) {
                         ref
                             .read(cartProvider.notifier)
-                            .setQuantity(item.productId, q);
+                            .setQuantity(item.productId, newQty);
                         StoreCartApiService.instance
-                            .updateItemByProductId(item.productId, q);
+                            .updateItemByProductId(item.productId, newQty);
                       },
                     );
                   },
@@ -122,44 +117,17 @@ class _CartListItem extends StatelessWidget {
   final VoidCallback onRemove;
   final void Function(int) onQuantityChanged;
 
-  final _postcodeController = TextEditingController();
-  bool _showShipping = false;
-  double _shippingCost = 0;
-
-  @override
-  void dispose() {
-    _postcodeController.dispose();
-    super.dispose();
-  }
-
-  void _calculateShipping(List<Product> items) {
-    if (_postcodeController.text.trim().isEmpty) return;
-    final postcode = _postcodeController.text.trim();
-    if (['3000', '3001', '3002'].contains(postcode)) {
-      setState(() => _shippingCost = 0); // Free CBD shipping
-      return;
+  String _imagePath(Product p) {
+    if (isImageUrl(p.primaryImage)) return p.primaryImage;
+    if (p.image.isNotEmpty && !isImageUrl(p.image)) {
+      return normalizeAssetPath(p.image);
     }
-
-    double totalShipping = 0;
-    for (var p in items) {
-      if (p.mainCategory.toLowerCase().contains('homeware')) {
-        continue; // Assuming homewares are under 5kg
-      }
-      
-      double weight = 10.0; // Assume 10kg default if not specified and not homeware
-      if (p.weight != null) {
-        final match = RegExp(r'([\d.]+)').firstMatch(p.weight!);
-        if (match != null) {
-          weight = double.tryParse(match.group(1)!) ?? 10.0;
-        }
-      }
-
-      if (weight > 5) {
-        // e.g., $10 base + $2 per kg over 5kg per heavy item
-        totalShipping += 10 + ((weight - 5) * 2);
-      }
-    }
-    setState(() => _shippingCost = totalShipping);
+    final ext = extensionFromPath(p.image.isNotEmpty
+        ? p.image
+        : p.images.isNotEmpty
+            ? p.images.first
+            : null);
+    return normalizeAssetPath(productMainImagePath(p.sku, p.id, ext: ext));
   }
 
   @override
@@ -222,7 +190,7 @@ class _CartListItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    product!.name,
+                    decodeHtmlEntities(product!.name),
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
@@ -248,9 +216,7 @@ class _CartListItem extends StatelessWidget {
                           minWidth: 32,
                           minHeight: 32,
                         ),
-                        onPressed: item.quantity <= 1
-                            ? null
-                            : () => onQuantityChanged(item.quantity - 1),
+                        onPressed: () => onQuantityChanged(item.quantity - 1),
                         icon: const Icon(Icons.remove),
                       ),
                       Padding(
@@ -258,9 +224,7 @@ class _CartListItem extends StatelessWidget {
                         child: Text(
                           '${item.quantity}',
                           style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
+                              fontWeight: FontWeight.bold, fontSize: 16),
                         ),
                       ),
                       IconButton.filledTonal(
@@ -275,7 +239,8 @@ class _CartListItem extends StatelessWidget {
                       ),
                       const Spacer(),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline),
+                        icon: const Icon(Icons.delete_outline,
+                            color: Colors.redAccent),
                         onPressed: onRemove,
                       ),
                     ],
@@ -288,19 +253,9 @@ class _CartListItem extends StatelessWidget {
       ),
     );
   }
-
-  String _imagePath(Product p) {
-    if (p.image.isNotEmpty && !isImageUrl(p.image)) {
-      return normalizeAssetPath(p.image);
-    }
-    final ext = extensionFromPath(p.image.isNotEmpty
-        ? p.image
-        : (p.images.isNotEmpty ? p.images.first : null));
-    return normalizeAssetPath(productMainImagePath(p.sku, p.id, ext: ext));
-  }
 }
 
-class _CartSummary extends ConsumerWidget {
+class _CartSummary extends ConsumerStatefulWidget {
   const _CartSummary({
     required this.cart,
     required this.repo,
@@ -310,13 +265,55 @@ class _CartSummary extends ConsumerWidget {
   final ProductRepository repo;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return FutureBuilder<double>(
+  ConsumerState<_CartSummary> createState() => _CartSummaryState();
+}
+
+class _CartSummaryState extends ConsumerState<_CartSummary> {
+  final _postcodeController = TextEditingController();
+  bool _showShipping = false;
+  double _shippingCost = 0;
+
+  @override
+  void dispose() {
+    _postcodeController.dispose();
+    super.dispose();
+  }
+
+  void _calculateShipping(List<Product> products) {
+    if (_postcodeController.text.trim().isEmpty) return;
+    final postcode = _postcodeController.text.trim();
+    if (['3000', '3001', '3002'].contains(postcode)) {
+      setState(() => _shippingCost = 0); // Free CBD shipping
+      return;
+    }
+
+    double totalShipping = 0;
+    for (var p in products) {
+      if (p.category.toLowerCase().contains('homeware')) {
+        continue; // Assuming homewares are under 5kg
+      }
+
+      double weight = 10.0; // Assume 10kg default
+      if (p.weight != null) {
+        final match = RegExp(r'([\d.]+)').firstMatch(p.weight!);
+        if (match != null) {
+          weight = double.tryParse(match.group(1)!) ?? 10.0;
+        }
+      }
+
+      if (weight > 5) {
+        totalShipping += 10 + ((weight - 5) * 2);
+      }
+    }
+    setState(() => _shippingCost = totalShipping);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return FutureBuilder<List<Product>>(
       future: () async {
-        double total = 0;
-        for (final item in cart) {
-          final p = await repo.getById(item.productId);
-          if (p != null) total += p.price * item.quantity;
         final products = <Product>[];
         for (final item in widget.cart) {
           final p = await widget.repo.getById(item.productId);
@@ -326,115 +323,109 @@ class _CartSummary extends ConsumerWidget {
       }(),
       builder: (context, snapshot) {
         final products = snapshot.data ?? [];
-        final cartTotal = products.fold<double>(
-            0,
-            (previousValue, product) =>
-                previousValue +
-                product.price *
-                    widget.cart
-                        .firstWhere((item) => item.productId == product.id)
-                        .quantity);
+        final cartTotal = products.fold<double>(0, (total, p) {
+          final qty = widget.cart.firstWhere((i) => i.productId == p.id).quantity;
+          return total + (p.price * qty);
+        });
         final orderTotal = cartTotal + _shippingCost;
-      return Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              offset: const Offset(0, -4),
-              blurRadius: 10,
-            ),
-          ],
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Shipping Estimator Toggle
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.local_shipping_outlined),
-                title: const Text('Estimate Shipping'),
-                trailing: Switch(
-                  value: _showShipping,
-                  onChanged: (val) => setState(() => _showShipping = val),
-                ),
-              ),
-              if (_showShipping) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _postcodeController,
-                        decoration: InputDecoration(
-                          hintText: 'Enter Postcode (e.g. 3000)',
-                          isDense: true,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    FilledButton(
-                      onPressed: () => _calculateShipping(products),
-                      child: const Text('Calculate'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
 
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Subtotal:',
-                      style: TextStyle(color: Colors.grey)),
-                  Text(
-                    '\$${cartTotal.toStringAsFixed(2)}',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ],
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                offset: const Offset(0, -4),
+                blurRadius: 10,
               ),
-              if (_showShipping && _postcodeController.text.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.local_shipping_outlined),
+                  title: const Text('Estimate Shipping'),
+                  trailing: Switch(
+                    value: _showShipping,
+                    onChanged: (val) => setState(() => _showShipping = val),
+                  ),
+                ),
+                if (_showShipping) ...[
+                  Row(
                     children: [
-                      const Text('Est. Shipping:',
-                          style: TextStyle(color: Colors.grey)),
-                      Text(
-                        _shippingCost == 0
-                            ? 'Free'
-                            : '\$${_shippingCost.toStringAsFixed(2)}',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: _shippingCost == 0 ? Colors.green : null),
+                      Expanded(
+                        child: TextField(
+                          controller: _postcodeController,
+                          decoration: InputDecoration(
+                            hintText: 'Enter Postcode (e.g. 3000)',
+                            isDense: true,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton(
+                        onPressed: () => _calculateShipping(products),
+                        child: const Text('Calculate'),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                ],
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Subtotal:', style: TextStyle(color: Colors.grey)),
+                    Text(
+                      '\$${cartTotal.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ],
                 ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Total:',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    '\$${orderTotal.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.primary,
+                if (_showShipping && _postcodeController.text.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Est. Shipping:',
+                            style: TextStyle(color: Colors.grey)),
+                        Text(
+                          _shippingCost == 0
+                              ? 'Free'
+                              : '\$${_shippingCost.toStringAsFixed(2)}',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: _shippingCost == 0 ? Colors.green : null),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),  
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Total:',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '\$${orderTotal.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -444,9 +435,12 @@ class _CartSummary extends ConsumerWidget {
                       if (!context.mounted) return;
                       if (!ok) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
+                          SnackBar(
+                            content: const Text(
                                 'Could not open store. Please visit qfurniture.com.au'),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
                           ),
                         );
                       }
@@ -460,24 +454,36 @@ class _CartSummary extends ConsumerWidget {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      final items = cart
-                          .map((e) =>
-                              (productId: e.productId, quantity: e.quantity))
-                          .toList();
-                      final ok =
-                          await StoreLinkService.openAddCartToStore(items);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                            content: const Text('Syncing items to store...'),
+                            duration: const Duration(seconds: 1),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10))),
+                      );
+
+                      for (final item in widget.cart) {
+                        await StoreCartApiService.instance
+                            .addItem(item.productId, quantity: item.quantity);
+                      }
+
                       if (!context.mounted) return;
+                      final ok = await StoreLinkService.openCart();
                       if (!ok) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
+                          SnackBar(
+                            content: const Text(
                                 'Could not open store. Add items at qfurniture.com.au'),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
                           ),
                         );
                       }
                     },
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: const Text('Add cart to store & open cart'),
+                    icon: const Icon(Icons.sync_alt),
+                    label: const Text('Add cart to store & open'),
                   ),
                 ),
               ],
