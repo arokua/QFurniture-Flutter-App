@@ -46,6 +46,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -68,20 +69,16 @@ flutter:
   assets:
     - assets/data/
     - assets/data/products.json
+    - assets/data/QIcon2.png
     - assets/dummy_data.json
     - assets/images/
-    - assets/products/031/
-    - assets/products/031/gallery/
     - assets/products/031071/
     - assets/products/031071/gallery/
     - assets/products/031089/
     - assets/products/031089/gallery/
     - assets/products/032042/
     - assets/products/032042/gallery/
-    - assets/products/033/
     - assets/products/033091/
-    - assets/products/041/
-    - assets/products/041/gallery/
     - assets/products/042/
     - assets/products/042/gallery/
     - assets/products/044/
@@ -458,3 +455,15 @@ flutter:
     - assets/products/QF-ST-STOOL-WH-1/
     - assets/products/QF-ST-STOOL-WH-1/gallery/
     - assets/products/QF-ST-STOOL-WH/
+
+# ── App Icon (flutter_launcher_icons) ─────────────────────────────────────────
+# Run: flutter pub run flutter_launcher_icons
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/data/QIcon2.png"
+  min_sdk_android: 21
+  web:
+    generate: false
+  windows:
+    generate: false
