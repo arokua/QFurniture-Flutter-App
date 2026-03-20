@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// In-app WebView for the store (qfurniture.com.au). Preserves session/cookies
+/// In-app WebView for the store (qtoys.com.au). Preserves session/cookies
 /// in this WebView context so add-to-cart and checkout work.
 class StoreWebViewScreen extends StatefulWidget {
   const StoreWebViewScreen({super.key, required this.initialUrl});

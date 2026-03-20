@@ -3,14 +3,14 @@
 Fetch products from WooCommerce Store API and save to assets/data/products.json
 with original image URLs (images[].src) so download_product_images.py can download them.
 
-API: https://qfurniture.com.au/wp-json/wc/store/v1/products
+API: https://qtoys.com.au/wp-json/wc/store/v1/products
 Fetches by batch (page/per_page). Writes: image = main URL, images = [main, ...gallery] URLs.
 """
 import json
 import requests
 from pathlib import Path
 
-BASE_URL = "https://qfurniture.com.au"
+BASE_URL = "https://qtoys.com.au"
 STORE_PRODUCTS_URL = f"{BASE_URL}/wp-json/wc/store/v1/products"
 
 OUT_DIR = Path("assets/data")

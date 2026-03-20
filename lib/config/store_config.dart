@@ -1,5 +1,11 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 /// Store (WooCommerce) base URL. Must match fetch_woocommerce_products.py BASE_URL.
-const String kStoreBaseUrl = 'https://qfurniture.com.au';
+String get kStoreBaseUrl => dotenv.env['STORE_BASE_URL'] ?? 'https://qtoys.com.au';
+
+/// WooCommerce API credentials (optional, read from .env)
+String get kWooKey => dotenv.env['WOO_KEY'] ?? '';
+String get kWooSecret => dotenv.env['WOO_SECRET'] ?? '';
 
 /// Paths on the store (WooCommerce default).
 const String kStoreCartPath = '/cart';

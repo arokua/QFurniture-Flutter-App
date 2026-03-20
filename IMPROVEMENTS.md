@@ -1,7 +1,7 @@
-# QFurniture App Improvements
+# qtoys App Improvements
 
 ## Overview
-The QFurniture app has been revamped with a focus on smooth product browsing experience.
+The qtoys app has been revamped with a focus on smooth product browsing experience.
 
 ## Key Improvements
 

@@ -2,13 +2,13 @@
 <!--
   Network Security Configuration
   ================================
-  Only the QFurniture store domain is explicitly trusted for HTTPS.
+  Only the qtoys store domain is explicitly trusted for HTTPS.
   No cleartext (HTTP) traffic is allowed outside of localhost.
   This satisfies Android 9+ (API 28+) security requirements.
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">qfurniture.com.au</domain>
+        <domain includeSubdomains="true">qtoys.com.au</domain>
     </domain-config>
 
     <!-- Allow cleartext on localhost only (for debug builds / dev server) -->

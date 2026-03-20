@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'app_router.dart';
 import 'config/store_cart_api_service.dart';
 import 'services/product_sync_service.dart';
@@ -26,11 +27,11 @@ class AppRoot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'QFurniture',
+      title: 'qtoys',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF795548), // brand brown
+        colorSchemeSeed: const Color(0xFF8BC34A), // light green brand
         fontFamily: 'Roboto',
       ),
       routerConfig: router,

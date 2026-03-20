@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>QFurniture</string>
+	<string>qtoys</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,7 +26,7 @@
 	<true/>
 
 	<!-- ── Network ──────────────────────────────────────────────────── -->
-	<!-- Allow loading content from qfurniture.com.au over HTTPS -->
+	<!-- Allow loading content from qtoys.com.au over HTTPS -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- No arbitrary loads; only the specific domains below -->
@@ -34,7 +34,7 @@
 		<false/>
 		<key>NSExceptionDomains</key>
 		<dict>
-			<key>qfurniture.com.au</key>
+			<key>qtoys.com.au</key>
 			<dict>
 				<key>NSIncludesSubdomains</key>
 				<true/>

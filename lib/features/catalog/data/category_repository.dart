@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../domain/category.dart';
 
-const _baseUrl = 'https://qfurniture.com.au';
+const _baseUrl = 'https://qtoys.com.au';
 const _categoriesEndpoint = '$_baseUrl/wp-json/wc/store/v1/products/categories';
 
 class CategoryRepository {

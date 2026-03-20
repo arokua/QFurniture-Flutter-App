@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 
-/// Branded splash screen showing the QFurniture logo (QIcon2.png).
+/// Branded splash screen showing the qtoys logo (QIcon2.png).
 /// Automatically navigates to home after a short animation.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -87,7 +87,7 @@ class _SplashScreenState extends State<SplashScreen>
                   const SizedBox(height: 28),
                   // ── Brand name ────────────────────────────────────────────
                   Text(
-                    'QFurniture',
+                    'qtoys',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 28,
@@ -99,7 +99,7 @@ class _SplashScreenState extends State<SplashScreen>
                   Text(
                     'Quality you can feel',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.75),
+                      color: Colors.white.withOpacity(0.75),
                       fontSize: 14,
                       letterSpacing: 0.5,
                     ),
