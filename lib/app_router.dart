@@ -3,8 +3,10 @@ import 'package:go_router/go_router.dart';
 import 'features/cart/presentation/cart_screen.dart';
 import 'features/catalog/presentation/favorites_screen.dart';
 import 'features/catalog/presentation/product_detail_screen.dart';
+import 'features/catalog/presentation/store_webview_screen.dart';
 import 'screens/main_tab_screen.dart';
 import 'screens/splash_screen.dart';
+import 'config/store_config.dart';
 
 /// All app route paths. Use these for context.push(path) / context.go(path).
 abstract class AppRoutes {
@@ -14,6 +16,7 @@ abstract class AppRoutes {
   static const String homeMore = '/home/more';
   static const String cart = '/cart';
   static const String favorites = '/favorites';
+  static const String store = '/store';
   static String product(int id) => '/p/$id';
 }
 
@@ -52,6 +55,13 @@ final router = GoRouter(
       builder: (ctx, st) {
         final id = int.parse(st.pathParameters['id']!);
         return ProductDetailScreen(productId: id);
+      },
+    ),
+    GoRoute(
+      path: AppRoutes.store,
+      builder: (ctx, st) {
+        final url = st.uri.queryParameters['url'] ?? storeCartUrl;
+        return StoreWebViewScreen(initialUrl: url);
       },
     ),
   ],

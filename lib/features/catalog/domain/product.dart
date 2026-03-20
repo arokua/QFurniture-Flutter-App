@@ -20,11 +20,11 @@ class Variant {
       double d = 0.0;
       if (v is num) {
         d = v.toDouble();
-        return d / 100; // local/API num cents
+        if (d >= 100 && d == d.truncateToDouble()) return d / 100;
+        return d;
       }
       if (v is String) {
         d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
-        // If string looks like a large raw number (no dot or .00) it's likely cents
         if (d >= 100 && (!v.contains('.') || v.endsWith('.0') || v.endsWith('.00'))) {
           return d / 100;
         }
@@ -118,7 +118,9 @@ class Product {
       double? d;
       if (v is num) {
         d = v.toDouble();
-        return (d ?? 0.0) / 100; // local products.json: e.g. 48495.0 -> 484.95
+        // Only divide by 100 when value looks like cents (integer >= 100). Already-in-dollars (e.g. from sync) must not be divided again.
+        if (d >= 100 && d == d.truncateToDouble()) return d / 100;
+        return d;
       }
       if (v is String) {
         d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), ''));

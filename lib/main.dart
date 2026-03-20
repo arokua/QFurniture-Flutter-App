@@ -1,16 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app_router.dart';
-import 'features/catalog/data/product_remote_datasource.dart';
-import 'features/catalog/data/product_local_datasource.dart';
-import 'features/catalog/data/product_repository.dart';
 import 'config/store_cart_api_service.dart';
 import 'services/product_sync_service.dart';
 import 'services/auth_service.dart';
-
-final productRepoProvider = Provider<ProductRepository>(
-  (ref) => ProductRepository(ProductLocalDataSource(), ProductRemoteDataSource()),
-);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

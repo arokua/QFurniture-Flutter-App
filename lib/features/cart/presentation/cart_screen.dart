@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_link_service.dart';
 import '../../catalog/data/product_repository.dart';
 import '../../catalog/domain/product.dart';
 import '../../catalog/utils/asset_path.dart';
@@ -11,7 +10,21 @@ import '../../catalog/utils/html_utils.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
 import '../domain/cart_item.dart';
-import '../../../main.dart';
+import '../../../providers.dart';
+import '../../../config/store_config.dart';
+import '../../catalog/presentation/store_webview_screen.dart';
+
+/// Cached per cart state — avoids creating a new Future on every build (main-thread churn).
+final cartSummaryProductsProvider = FutureProvider<List<Product>>((ref) async {
+  final cart = ref.watch(cartProvider);
+  final repo = ref.watch(productRepoProvider);
+  final products = <Product>[];
+  for (final item in cart) {
+    final p = await repo.getById(item.productId);
+    if (p != null) products.add(p);
+  }
+  return products;
+});
 
 class CartScreen extends ConsumerWidget {
   const CartScreen({super.key});
@@ -255,7 +268,7 @@ class _CartListItem extends StatelessWidget {
   }
 }
 
-class _CartSummary extends ConsumerStatefulWidget {
+class _CartSummary extends ConsumerWidget {
   const _CartSummary({
     required this.cart,
     required this.repo,
@@ -265,70 +278,16 @@ class _CartSummary extends ConsumerStatefulWidget {
   final ProductRepository repo;
 
   @override
-  ConsumerState<_CartSummary> createState() => _CartSummaryState();
-}
-
-class _CartSummaryState extends ConsumerState<_CartSummary> {
-  final _postcodeController = TextEditingController();
-  bool _showShipping = false;
-  double _shippingCost = 0;
-
-  @override
-  void dispose() {
-    _postcodeController.dispose();
-    super.dispose();
-  }
-
-  void _calculateShipping(List<Product> products) {
-    if (_postcodeController.text.trim().isEmpty) return;
-    final postcode = _postcodeController.text.trim();
-    if (['3000', '3001', '3002'].contains(postcode)) {
-      setState(() => _shippingCost = 0); // Free CBD shipping
-      return;
-    }
-
-    double totalShipping = 0;
-    for (var p in products) {
-      if (p.category.toLowerCase().contains('homeware')) {
-        continue; // Assuming homewares are under 5kg
-      }
-
-      double weight = 10.0; // Assume 10kg default
-      if (p.weight != null) {
-        final match = RegExp(r'([\d.]+)').firstMatch(p.weight!);
-        if (match != null) {
-          weight = double.tryParse(match.group(1)!) ?? 10.0;
-        }
-      }
-
-      if (weight > 5) {
-        totalShipping += 10 + ((weight - 5) * 2);
-      }
-    }
-    setState(() => _shippingCost = totalShipping);
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final asyncProducts = ref.watch(cartSummaryProductsProvider);
 
-    return FutureBuilder<List<Product>>(
-      future: () async {
-        final products = <Product>[];
-        for (final item in widget.cart) {
-          final p = await widget.repo.getById(item.productId);
-          if (p != null) products.add(p);
-        }
-        return products;
-      }(),
-      builder: (context, snapshot) {
-        final products = snapshot.data ?? [];
+    return asyncProducts.when(
+      data: (products) {
         final cartTotal = products.fold<double>(0, (total, p) {
-          final qty = widget.cart.firstWhere((i) => i.productId == p.id).quantity;
+          final qty = cart.firstWhere((i) => i.productId == p.id).quantity;
           return total + (p.price * qty);
         });
-        final orderTotal = cartTotal + _shippingCost;
-
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -345,79 +304,25 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.local_shipping_outlined),
-                  title: const Text('Estimate Shipping'),
-                  trailing: Switch(
-                    value: _showShipping,
-                    onChanged: (val) => setState(() => _showShipping = val),
-                  ),
-                ),
-                if (_showShipping) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _postcodeController,
-                          decoration: InputDecoration(
-                            hintText: 'Enter Postcode (e.g. 3000)',
-                            isDense: true,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton(
-                        onPressed: () => _calculateShipping(products),
-                        child: const Text('Calculate'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Subtotal:', style: TextStyle(color: Colors.grey)),
-                    Text(
-                      '\$${cartTotal.toStringAsFixed(2)}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-                if (_showShipping && _postcodeController.text.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Est. Shipping:',
-                            style: TextStyle(color: Colors.grey)),
-                        Text(
-                          _shippingCost == 0
-                              ? 'Free'
-                              : '\$${_shippingCost.toStringAsFixed(2)}',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: _shippingCost == 0 ? Colors.green : null),
-                        ),
-                      ],
-                    ),
-                  ),
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Total:',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Total:',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const Text(
+                          'Shipping calculated at checkout',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
                     ),
                     Text(
-                      '\$${orderTotal.toStringAsFixed(2)}',
+                      '\$${cartTotal.toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -430,60 +335,15 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: () async {
-                      final ok = await StoreLinkService.openCheckout();
-                      if (!context.mounted) return;
-                      if (!ok) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text(
-                                'Could not open store. Please visit qfurniture.com.au'),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        );
-                      }
+                    onPressed: () {
+                      final first = cart.isNotEmpty ? cart.first : null;
+                      final url = first != null
+                          ? storeAddToCartUrl(first.productId, quantity: first.quantity)
+                          : storeCartUrl;
+                      StoreWebViewScreen.push(context, url);
                     },
                     icon: const Icon(Icons.open_in_browser),
-                    label: const Text('Checkout on store (qfurniture.com.au)'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                            content: const Text('Syncing items to store...'),
-                            duration: const Duration(seconds: 1),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
-                      );
-
-                      for (final item in widget.cart) {
-                        await StoreCartApiService.instance
-                            .addItem(item.productId, quantity: item.quantity);
-                      }
-
-                      if (!context.mounted) return;
-                      final ok = await StoreLinkService.openCart();
-                      if (!ok) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text(
-                                'Could not open store. Add items at qfurniture.com.au'),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.sync_alt),
-                    label: const Text('Add cart to store & open'),
+                    label: const Text('Check out on store'),
                   ),
                 ),
               ],
@@ -491,6 +351,19 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
           ),
         );
       },
+      loading: () => Container(
+        padding: const EdgeInsets.all(20),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          height: 32,
+          width: 32,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      error: (_, __) => Container(
+        padding: const EdgeInsets.all(20),
+        child: const Text('Could not load totals'),
+      ),
     );
   }
 }

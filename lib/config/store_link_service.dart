@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'store_config.dart';
@@ -28,9 +29,13 @@ class StoreLinkService {
   static Future<bool> _launch(String url) async {
     final uri = Uri.parse(url);
     try {
-      // On Android 11+, canLaunchUrl can be false without <queries> in manifest;
-      // we still try launchUrl so the browser can open (manifest has https/http queries).
-      return launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (kIsWeb) {
+        return launchUrl(uri, webOnlyWindowName: '_blank');
+      }
+      // On mobile: open in in-app WebView so store session/cookies are preserved (same context).
+      final inApp = await launchUrl(uri, mode: LaunchMode.inAppWebView);
+      if (inApp) return true;
+      return launchUrl(uri, mode: LaunchMode.inAppWebView);
     } catch (_) {
       return false;
     }

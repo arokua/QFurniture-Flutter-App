@@ -9,7 +9,8 @@ import '../data/favorites_provider.dart';
 import '../domain/product.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
-import '../../../main.dart';
+import '../../../providers.dart';
+import '../../../services/product_sync_service.dart';
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 final selectedCategoryProvider = StateProvider<String?>((ref) => null);
@@ -88,15 +89,12 @@ class ProductListScreen extends ConsumerStatefulWidget {
 class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   @override
   Widget build(BuildContext context) {
-    final repo = ref.watch(productRepoProvider);
     final searchQuery = ref.watch(searchQueryProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final isGridView = ref.watch(viewModeProvider);
-
     final cart = ref.watch(cartProvider);
     final cartCount = cartItemCount(cart);
     final sortOrder = ref.watch(sortOrderProvider);
-    final refreshTrigger = ref.watch(refreshTriggerProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -195,10 +193,16 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                               final isSelected = selectedCategory == null
                                   ? category == 'All'
                                   : selectedCategory == category;
+                              
+                              final allProds = ref.watch(allProductsProvider).value ?? [];
+                              final count = category == 'All' 
+                                ? allProds.length 
+                                : allProds.where((p) => p.categoryList.contains(category)).length;
+
                               return Padding(
                                 padding: const EdgeInsets.only(right: 8.0),
                                 child: FilterChip(
-                                  label: Text(decodeHtmlEntities(category)),
+                                  label: Text('${decodeHtmlEntities(category)} ($count)'),
                                   selected: isSelected,
                                   onSelected: (selected) {
                                     ref
@@ -250,6 +254,25 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(
+              children: [
+                ref.watch(allProductsProvider).maybeWhen(
+                  data: (_) {
+                    final count = ref.watch(filteredProductsProvider).length;
+                    return Text('$count products found',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.bold,
+                            ));
+                  },
+                  orElse: () => const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
           // Products List
           Expanded(
             child: Builder(
@@ -258,6 +281,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
                 return RefreshIndicator(
                   onRefresh: () async {
+                    await ProductSyncService.instance.forceRefresh();
                     ref.read(refreshTriggerProvider.notifier).state++;
                   },
                   child: allProductsAsync.when(
@@ -531,7 +555,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 padding: const EdgeInsets.all(10.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.start,
                   children: [
                     Text(
                       decodeHtmlEntities(product.name),
@@ -976,18 +1000,21 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    if (!p.inStock)
+                    if (p.stockAmount != null || !p.inStock)
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.red.shade50,
+                          color: p.inStock ? Colors.green.shade50 : Colors.red.shade50,
                           borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: p.inStock ? Colors.green.shade200 : Colors.red.shade200,
+                          ),
                         ),
                         child: Text(
-                          'Out of Stock',
+                          p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
                           style: TextStyle(
-                              color: Colors.red.shade700,
+                              color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
                               fontWeight: FontWeight.bold,
                               fontSize: 12),
                         ),
@@ -1071,13 +1098,10 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                             SnackBar(
                               content: Text(
                                   'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'),
+                              duration: const Duration(seconds: 2),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),
-                              action: SnackBarAction(
-                                label: 'View Cart',
-                                onPressed: () => context.push(AppRoutes.cart),
-                              ),
                             ),
                           );
                         }

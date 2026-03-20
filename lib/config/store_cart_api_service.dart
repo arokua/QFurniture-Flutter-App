@@ -66,6 +66,42 @@ class StoreCartApiService {
     }
   }
 
+  /// Syncs an entire local cart to the online store via the batch endpoint.
+  Future<bool> syncCartToOnline(
+      List<({int productId, int quantity})> items) async {
+    if (items.isEmpty) return true;
+
+    try {
+      final requests = items.map((item) {
+        return {
+          'method': 'POST',
+          'path': '/wc/store/v1/cart/items',
+          'body': {
+            'id': item.productId,
+            'quantity': item.quantity,
+          }
+        };
+      }).toList();
+
+      final uri = Uri.parse('$_base/batch');
+      final res = await http
+          .post(
+            uri,
+            headers: _headers,
+            body: jsonEncode({'requests': requests}),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await setCookieFromResponse(res);
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// GET cart items; returns list of {id, key, quantity} for remove/update.
   Future<List<({int id, String key, int quantity})>> getItems() async {
     try {

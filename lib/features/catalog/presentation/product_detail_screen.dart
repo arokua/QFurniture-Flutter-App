@@ -1,18 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:intl/intl.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
-import '../../../main.dart';
-import '../../../app_router.dart';
-import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_link_service.dart';
-import '../../cart/data/cart_provider.dart';
+import '../../../providers.dart';
+import '../../../config/store_config.dart';
+import 'store_webview_screen.dart';
 import '../domain/product.dart';
-import 'package:go_router/go_router.dart';
-import '../data/product_remote_datasource.dart';
-import '../../cart/presentation/cart_screen.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
   final int productId;
@@ -26,6 +20,7 @@ class ProductDetailScreen extends ConsumerStatefulWidget {
 class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   int _selectedImageIndex = 0;
   final PageController _pageController = PageController();
+  bool _descriptionExpanded = false;
 
   @override
   void dispose() {
@@ -165,18 +160,32 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 ),
               Container(
                 margin: const EdgeInsets.only(top: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: p.inStock ? Colors.green : Colors.red,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+                  color: p.inStock ? Colors.green.shade50 : Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: p.inStock ? Colors.green.shade200 : Colors.red.shade200,
                   ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      p.inStock ? Icons.check_circle_outline : Icons.error_outline,
+                      size: 16,
+                      color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
+                      style: TextStyle(
+                        color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -191,7 +200,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          ..._buildDescriptionParagraphs(context, p.description),
+          _buildDescriptionWithReadMore(context, p.description),
           const SizedBox(height: 24),
         ],
         if (p.variants.isNotEmpty) ...[
@@ -252,27 +261,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           height: 50,
           child: FilledButton.icon(
             onPressed: p.inStock
-                ? () async {
-                    ref.read(cartProvider.notifier).add(p.id);
-                    await StoreCartApiService.instance.addItem(p.id);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content:
-                            Text('${decodeHtmlEntities(p.name)} added to cart'),
-                        behavior: SnackBarBehavior.floating,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                        action: SnackBarAction(
-                          label: 'View Cart',
-                          onPressed: () => context.push(AppRoutes.cart),
-                        ),
-                      ),
-                    );
-                  }
+                ? () => StoreWebViewScreen.push(context, storeAddToCartUrl(p.id, quantity: 1))
                 : null,
-            icon: const Icon(Icons.shopping_cart),
-            label: Text(p.inStock ? 'Add to Cart' : 'Out of Stock'),
+            icon: const Icon(Icons.open_in_browser, size: 22),
+            label: Text(p.inStock ? 'Check out on store' : 'Out of Stock'),
             style: FilledButton.styleFrom(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -280,33 +272,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: () async {
-            final ok = await StoreLinkService.openAddToCart(p.id);
-            if (!context.mounted) return;
-            if (!ok) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text(
-                      'Could not open store. Visit qfurniture.com.au to buy.'),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-              );
-            }
-          },
-          icon: const Icon(Icons.open_in_browser, size: 20),
-          label: const Text('Buy on store (qfurniture.com.au)'),
-        ),
         const SizedBox(height: 24),
-        _buildShippingGuarantee(context),
+        _buildProductBenefits(context),
       ],
     );
   }
 
-  Widget _buildShippingGuarantee(BuildContext context) {
+  /// Product benefits: 12 months warranty, Ship in 24 hours, Eco-Friendly Timber. No returns.
+  Widget _buildProductBenefits(BuildContext context) {
+    const green = Color(0xFF2E7D32);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -317,32 +291,33 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _guaranteeItem(context, Icons.local_shipping_outlined, 'Fast\nShipping'),
-          _guaranteeItem(context, Icons.security_outlined, 'Secure\nCheckout'),
-          _guaranteeItem(context, Icons.assignment_return_outlined, '30-Day\Returns'),
-          _guaranteeItem(context, Icons.support_agent_outlined, '24/7\nSupport'),
+          _benefitItem(context, Icons.shield_outlined, '12 months replacement\nwarranty', green),
+          _benefitItem(context, Icons.local_shipping_outlined, 'Ship in 24 hours', green),
+          _benefitItem(context, Icons.eco_outlined, 'Eco-Friendly Timber', green),
         ],
       ),
     );
   }
 
-  Widget _guaranteeItem(BuildContext context, IconData icon, String text) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: Theme.of(context).colorScheme.primary, size: 28),
-        const SizedBox(height: 8),
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey.shade700,
-            height: 1.2,
+  Widget _benefitItem(BuildContext context, IconData icon, String text, Color iconColor) {
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: iconColor, size: 32),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade800,
+              height: 1.2,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -518,30 +493,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   String _detailImagePathAt(dynamic product, int index) {
-    final images = product.images.isNotEmpty ? product.images : [product.image];
-    if (index < images.length) {
-      final fromJson = images[index];
+    if (product.images.isNotEmpty && index < product.images.length) {
+      final fromJson = product.images[index];
       if (isImageUrl(fromJson)) return fromJson;
       return normalizeAssetPath(fromJson);
     }
-    if (index == 0) {
-      final ext = extensionFromPath(product.image.isNotEmpty
-          ? product.image
-          : product.images.isNotEmpty
-              ? product.images.first
-              : null);
-      return normalizeAssetPath(
-          productMainImagePath(product.sku, product.id, ext: ext));
-    }
-    final ext = extensionFromPath(
-        index - 1 < images.length ? images[index - 1] : product.image);
-    return normalizeAssetPath(
-        productGalleryImagePath(product.sku, product.id, index - 1, ext: ext));
+    
+    // Fallback if images array is empty or out of bounds
+    if (isImageUrl(product.image)) return product.image;
+    return normalizeAssetPath(product.image);
   }
 
   Widget _buildImageGallery(product) {
-    final images = product.images.isNotEmpty ? product.images : [product.image];
-    final count = images.isEmpty ? 1 : images.length;
+    final count = product.images.isNotEmpty ? product.images.length : 1;
 
     // Always use PageView so images are slidable (even with 1 image for consistency)
     return Stack(
@@ -647,32 +611,54 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return pct > 0 ? '-$pct%' : 'Sale';
   }
 
-  /// Strips HTML tags, decodes entities, and returns paragraph widgets.
-  static List<Widget> _buildDescriptionParagraphs(
-      BuildContext context, String htmlText) {
-    if (htmlText.trim().isEmpty) return [];
+  static const int _descriptionPreviewLines = 4;
+
+  String _descriptionToPlain(String htmlText) {
+    if (htmlText.trim().isEmpty) return '';
     String s = htmlText
         .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
         .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
     s = s
         .replaceAll(RegExp(r'<[^>]*>'), ' ')
         .replaceAll(RegExp(r'[ \t]+'), ' ');
-    final plain = decodeHtmlEntities(s).trim();
+    return decodeHtmlEntities(s).trim();
+  }
+
+  Widget _buildDescriptionWithReadMore(BuildContext context, String htmlText) {
+    final plain = _descriptionToPlain(htmlText);
+    if (plain.isEmpty) return const SizedBox.shrink();
     final style = Theme.of(context).textTheme.bodyLarge;
-    final paragraphs = plain
-        .split(RegExp(r'\n\s*\n'))
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    if (paragraphs.isEmpty) {
-      return [Text(plain, style: style)];
+    final needsExpand = plain.contains('\n') || plain.length > 280;
+    if (!needsExpand) {
+      return Text(plain, style: style);
     }
-    return [
-      for (int i = 0; i < paragraphs.length; i++) ...[
-        Text(paragraphs[i], style: style),
-        if (i < paragraphs.length - 1) const SizedBox(height: 12),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedCrossFade(
+          firstChild: Text(
+            plain,
+            style: style,
+            maxLines: _descriptionPreviewLines,
+            overflow: TextOverflow.ellipsis,
+          ),
+          secondChild: Text(plain, style: style),
+          crossFadeState: _descriptionExpanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 200),
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: () => setState(() => _descriptionExpanded = !_descriptionExpanded),
+          icon: Icon(
+            _descriptionExpanded ? Icons.expand_less : Icons.expand_more,
+            size: 20,
+          ),
+          label: Text(_descriptionExpanded ? 'Read less' : 'Read more'),
+        ),
       ],
-    ];
+    );
   }
 
   Widget _buildImagePlaceholder() {

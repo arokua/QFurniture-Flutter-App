@@ -7,7 +7,7 @@ import '../data/favorites_provider.dart';
 import '../domain/product.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
-import '../../../main.dart';
+import '../../../providers.dart';
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});

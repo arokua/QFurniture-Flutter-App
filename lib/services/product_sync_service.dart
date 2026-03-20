@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -87,12 +86,17 @@ class ProductSyncService {
 
   // ── Private helpers ─────────────────────────────────────────────────────────
 
+  static bool _backgroundRefreshScheduled = false;
+
   void _refreshInBackground(SharedPreferences prefs) {
+    if (_backgroundRefreshScheduled) return;
+    _backgroundRefreshScheduled = true;
     Future.microtask(() async {
       try {
         final fresh = await _fetchAllRemote();
         if (fresh.isNotEmpty) await _saveCache(prefs, fresh);
       } catch (_) {}
+      _backgroundRefreshScheduled = false;
     });
   }
 
@@ -115,13 +119,20 @@ class ProductSyncService {
 
       all.addAll(batch.cast<Map<String, dynamic>>());
 
-      // Check total pages header
-      final totalPages =
-          int.tryParse(response.headers['x-wp-totalpages'] ?? '1') ?? 1;
-      if (page >= totalPages) break;
+      final totalStr = response.headers['x-wp-total'];
+      final totalPagesStr = response.headers['x-wp-totalpages'];
+      if (totalStr != null && page == 1) {
+        print('WooCommerce Store API reports $totalStr products total.');
+      }
+
+      if (totalPagesStr != null) {
+        final totalPages = int.tryParse(totalPagesStr) ?? 1;
+        if (page >= totalPages) break;
+      }
       page++;
     }
 
+    print('Fetched ${all.length} products total from Store API');
     return all.map(_normalizeRemoteProduct).toList();
   }
 
@@ -141,14 +152,17 @@ class ProductSyncService {
         .where((c) => c.isNotEmpty)
         .toList();
 
-    // Price (WC Store API uses strings in pence/cents for some themes)
+    // Price: always output dollars so cache never has cents (avoids double-divide in fromJson on refresh).
     final pricesObj = p['prices'] as Map<String, dynamic>? ?? {};
     double parseP(dynamic v) {
       if (v == null) return 0.0;
-      if (v is num) return v.toDouble();
+      if (v is num) {
+        final d = v.toDouble();
+        if (d >= 100 && d == d.truncateToDouble()) return d / 100;
+        return d;
+      }
       final s = v.toString().replaceAll(RegExp(r'[^\d.]'), '');
       final d = double.tryParse(s) ?? 0.0;
-      // WC Store API prices are in minor units (cents) when they're large ints
       if (d >= 100 && !v.toString().contains('.')) return d / 100;
       return d;
     }
@@ -160,8 +174,18 @@ class ProductSyncService {
 
     // Stock
     final stockAvail = p['stock_availability'];
+    final apiStockAmountText = stockAvail is Map ? stockAvail['text']?.toString() : null;
+    final stockQuantity = p['stock_quantity'];
     String? stockAmount;
-    if (stockAvail is Map) stockAmount = stockAvail['text']?.toString();
+
+    if (apiStockAmountText != null && apiStockAmountText.trim().isNotEmpty) {
+      stockAmount = apiStockAmountText.trim();
+    } else if (stockQuantity != null) {
+      final quantity = int.tryParse(stockQuantity.toString());
+      if (quantity != null && quantity > 0) {
+        stockAmount = '$quantity in stock';
+      }
+    }
 
     // Attributes
     String? material, color, assemblyRequired;
