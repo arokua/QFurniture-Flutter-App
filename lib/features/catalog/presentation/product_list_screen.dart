@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -87,6 +88,32 @@ class ProductListScreen extends ConsumerStatefulWidget {
 }
 
 class _ProductListScreenState extends ConsumerState<ProductListScreen> {
+  final _searchController = TextEditingController();
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    // Sync controller text from provider (in case of hot reload / restore)
+    _searchController.text = ref.read(searchQueryProvider);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        ref.read(searchQueryProvider.notifier).state = value;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final searchQuery = ref.watch(searchQueryProvider);
@@ -104,7 +131,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFF795548), // Brand Brown
+                color: Theme.of(context).colorScheme.primary, // Brand Color
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Text(
@@ -118,7 +145,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             ),
             const SizedBox(width: 8),
             const Text(
-              'Furniture',
+              'Toys',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ],
@@ -150,17 +177,21 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             padding: const EdgeInsets.all(16.0),
             child: Column(
               children: [
-                // Search Bar
+                // Search Bar — uses TextEditingController + debounce
                 TextField(
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'Search products...',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: searchQuery.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear),
-                            onPressed: () => ref
-                                .read(searchQueryProvider.notifier)
-                                .state = '',
+                            onPressed: () {
+                              _searchController.clear();
+                              ref
+                                  .read(searchQueryProvider.notifier)
+                                  .state = '';
+                            },
                           )
                         : null,
                     border: OutlineInputBorder(
@@ -169,8 +200,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     filled: true,
                     fillColor: Theme.of(context).colorScheme.surface,
                   ),
-                  onChanged: (value) =>
-                      ref.read(searchQueryProvider.notifier).state = value,
+                  onChanged: _onSearchChanged,
                 ),
                 const SizedBox(height: 12),
                 // Category Filter: all categories that appear in any product

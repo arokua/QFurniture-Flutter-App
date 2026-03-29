@@ -43,11 +43,11 @@ class Variant {
 
 /// Main catalogue categories used for filtering (same as elsewhere in the app).
 const List<String> kMainCategories = [
+  'Toys and Educational Resources',
+  'Furniture and Preschool Equipment',
   'Homewares',
-  'Outdoor Furniture',
-  'Indoor Dining',
   'New Arrivals',
-  'Children\'s Furniture',
+  'By Age Group',
 ];
 
 class Product {

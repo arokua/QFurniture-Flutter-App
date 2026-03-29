@@ -21,6 +21,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   int _selectedImageIndex = 0;
   final PageController _pageController = PageController();
   bool _descriptionExpanded = false;
+  late Future<Product?> _productFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    // Cache the future so setState (from gallery swipes) doesn't recreate it
+    _productFuture = ref.read(productRepoProvider).getById(widget.productId);
+  }
 
   @override
   void dispose() {
@@ -30,9 +38,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final repo = ref.watch(productRepoProvider);
     return FutureBuilder<Product?>(
-      future: repo.getById(widget.productId),
+      future: _productFuture,
       builder: (ctx, snap) {
         if (snap.connectionState != ConnectionState.done) {
           return const Scaffold(

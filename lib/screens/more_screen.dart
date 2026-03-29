@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../services/auth_service.dart';
 
 /// More tab: links to Cart, Favorites, and placeholders.
 class MoreScreen extends StatelessWidget {
@@ -8,6 +9,10 @@ class MoreScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final session = AuthService.instance.currentSession;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('More'),
@@ -15,6 +20,69 @@ class MoreScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // User Profile Section
+          if (session != null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Card(
+                elevation: 0,
+                color: cs.primaryContainer.withValues(alpha: 0.3),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundColor: cs.primary,
+                        child: Text(
+                          session.displayName.isNotEmpty ? session.displayName[0].toUpperCase() : 'U',
+                          style: TextStyle(color: cs.onPrimary, fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              session.displayName,
+                              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: cs.secondary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                session.role.toUpperCase(),
+                                style: TextStyle(color: cs.onSecondary, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Text(
+                              session.email,
+                              style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.6)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.logout),
+                        onPressed: () async {
+                          await AuthService.instance.signOut();
+                          if (context.mounted) {
+                            context.go(AppRoutes.login);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.shopping_cart_outlined),
             title: const Text('Cart'),

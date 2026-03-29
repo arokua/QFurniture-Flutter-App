@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 final productRemoteProvider = Provider((ref) => ProductRemoteDataSource());
 
 class ProductRemoteDataSource {
-  static const String _endpoint = '$kStoreBaseUrl/wp-json/wc/store/v1/products';
+  static String get _endpoint => '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
 
   Future<List<Product>> fetchProducts({int page = 1, int perPage = 100}) async {
     final uri = Uri.parse(_endpoint).replace(

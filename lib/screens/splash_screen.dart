@@ -60,8 +60,8 @@ class _SplashScreenState extends State<SplashScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              const Color(0xFF5D4037), // darker brown
-              const Color(0xFF795548), // brand brown
+              const Color(0xFF689F38), // darker green
+              const Color(0xFF8BC34A), // brand green
             ],
           ),
         ),
@@ -97,11 +97,22 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Quality you can feel',
+                    'learning through play',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.75),
-                      fontSize: 14,
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'TWO DECADES OF ENGINEERING CHILDREN\'S DREAMS',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 10,
                       letterSpacing: 0.5,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],

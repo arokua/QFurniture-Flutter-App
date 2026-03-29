@@ -88,6 +88,26 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     _saveCart();
   }
 
+  /// Re-fetch cart items from remote (WooCommerce Store API) and update local state.
+  /// Call this after WebView closes to sync any changes the user made in the browser.
+  Future<void> refreshFromRemote() async {
+    if (!StoreCartApiService.instance.hasSession) return;
+    try {
+      final remoteItems = await StoreCartApiService.instance.getItems();
+      if (remoteItems.isNotEmpty) {
+        state = remoteItems
+            .map((e) => CartItem(productId: e.id, quantity: e.quantity))
+            .toList();
+      } else {
+        // Remote cart is empty — clear local
+        state = [];
+      }
+      _saveCart();
+    } catch (_) {
+      // Silently fail; keep local state as-is
+    }
+  }
+
   /// Force fetch latest prices and stock from remote for items currently in cart.
   Future<void> syncStocks() async {
     final list = [...state];

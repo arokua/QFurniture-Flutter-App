@@ -23,6 +23,15 @@ class StoreCartApiService {
 
   bool get hasSession => _cookie != null && _cookie!.isNotEmpty;
 
+  /// Expose the current session cookie for WebView injection.
+  String? get cookie => _cookie;
+
+  /// Set cookie from external source (e.g. WebView).
+  Future<void> setCookie(String cookie) async {
+    _cookie = cookie;
+    await _prefs?.setString('cart_session_cookie', cookie);
+  }
+
   Future<void> setCookieFromResponse(http.Response response) async {
     final setCookie = response.headers['set-cookie'];
     if (setCookie != null && setCookie.isNotEmpty) {
