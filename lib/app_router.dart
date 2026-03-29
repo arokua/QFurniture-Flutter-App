@@ -4,13 +4,18 @@ import 'features/cart/presentation/cart_screen.dart';
 import 'features/catalog/presentation/favorites_screen.dart';
 import 'features/catalog/presentation/product_detail_screen.dart';
 import 'features/catalog/presentation/store_webview_screen.dart';
+import 'features/auth/presentation/login_screen.dart';
+import 'features/auth/presentation/registration_screen.dart';
 import 'screens/main_tab_screen.dart';
 import 'screens/splash_screen.dart';
+import 'services/auth_service.dart';
 import 'config/store_config.dart';
 
 /// All app route paths. Use these for context.push(path) / context.go(path).
 abstract class AppRoutes {
   static const String root = '/';
+  static const String login = '/login';
+  static const String register = '/register';
   static const String home = '/home';
   static const String homeCategories = '/home/categories';
   static const String homeMore = '/home/more';
@@ -23,10 +28,29 @@ abstract class AppRoutes {
 final router = GoRouter(
   initialLocation: AppRoutes.root,
   debugLogDiagnostics: true,
+  refreshListenable: AuthService.instance,
+  redirect: (ctx, state) {
+    final isSignedIn = AuthService.instance.isSignedIn;
+    final isLoggingIn = state.uri.path == AppRoutes.login;
+    final isSplash = state.uri.path == AppRoutes.root;
+
+    if (isSplash) return null;
+    if (!isSignedIn && !isLoggingIn) return AppRoutes.login;
+    if (isSignedIn && isLoggingIn) return AppRoutes.home;
+    return null;
+  },
   routes: [
     GoRoute(
       path: AppRoutes.root,
       builder: (_, __) => const SplashScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.login,
+      builder: (_, __) => const LoginScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.register,
+      builder: (_, __) => const RegistrationScreen(),
     ),
     GoRoute(
       path: AppRoutes.home,

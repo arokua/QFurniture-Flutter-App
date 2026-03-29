@@ -27,8 +27,7 @@ class ProductSyncService {
   static const int _backgroundRefreshHours = 2;
   static const int _perPage = 100;
 
-  static const String _remoteEndpoint =
-      '$kStoreBaseUrl/wp-json/wc/store/v1/products';
+  static String get _remoteEndpoint => '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
 
   // ── Public API ──────────────────────────────────────────────────────────────
 

@@ -268,7 +268,7 @@ class _CartListItem extends StatelessWidget {
   }
 }
 
-class _CartSummary extends ConsumerWidget {
+class _CartSummary extends ConsumerStatefulWidget {
   const _CartSummary({
     required this.cart,
     required this.repo,
@@ -278,14 +278,55 @@ class _CartSummary extends ConsumerWidget {
   final ProductRepository repo;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CartSummary> createState() => _CartSummaryState();
+}
+
+class _CartSummaryState extends ConsumerState<_CartSummary> {
+  bool _isSyncing = false;
+
+  Future<void> _handleCheckout(BuildContext context) async {
+    setState(() => _isSyncing = true);
+
+    try {
+      // Sync the FULL local cart to WooCommerce Store API
+      final items = widget.cart
+          .map((e) => (productId: e.productId, quantity: e.quantity))
+          .toList();
+      final success = await StoreCartApiService.instance.syncCartToOnline(items);
+
+      if (!context.mounted) return;
+
+      if (success) {
+        // Open the WooCommerce checkout page
+        StoreWebViewScreen.push(context, storeCheckoutUrl);
+      } else {
+        // Fallback: open store cart page so user can add items manually
+        StoreWebViewScreen.push(context, storeCartUrl);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not sync cart. Opening store cart page instead.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        StoreWebViewScreen.push(context, storeCartUrl);
+      }
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final asyncProducts = ref.watch(cartSummaryProductsProvider);
 
     return asyncProducts.when(
       data: (products) {
         final cartTotal = products.fold<double>(0, (total, p) {
-          final qty = cart.firstWhere((i) => i.productId == p.id).quantity;
+          final qty = widget.cart.firstWhere((i) => i.productId == p.id).quantity;
           return total + (p.price * qty);
         });
         return Container(
@@ -335,15 +376,18 @@ class _CartSummary extends ConsumerWidget {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: () {
-                      final first = cart.isNotEmpty ? cart.first : null;
-                      final url = first != null
-                          ? storeAddToCartUrl(first.productId, quantity: first.quantity)
-                          : storeCartUrl;
-                      StoreWebViewScreen.push(context, url);
-                    },
-                    icon: const Icon(Icons.open_in_browser),
-                    label: const Text('Check out on store'),
+                    onPressed: _isSyncing ? null : () => _handleCheckout(context),
+                    icon: _isSyncing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.shopping_cart_checkout),
+                    label: Text(_isSyncing ? 'Syncing cart...' : 'Proceed to checkout'),
                   ),
                 ),
               ],
@@ -367,3 +411,4 @@ class _CartSummary extends ConsumerWidget {
     );
   }
 }
+

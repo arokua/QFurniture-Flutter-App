@@ -8,6 +8,7 @@ import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
 
   // Initialise cart session (cookie-based WooCommerce cart)
   await StoreCartApiService.instance.init();
