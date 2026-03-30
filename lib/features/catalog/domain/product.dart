@@ -254,9 +254,13 @@ class Product {
         .any((c) => c.toLowerCase().contains("children"));
     if (isChildren && material == null) material = 'Rubberwood';
 
-    // Stock mapping for Store API
+    // Stock mapping for Store API (may include HTML in stockAmount from WC)
     final bool apiInStock = j['is_in_stock'] ?? (j['stock_status'] == 'instock');
     final apiStockAmount = j['stock_quantity']?.toString();
+    final String? rawStock = (j['stockAmount'] as String? ?? '').trim().isNotEmpty
+        ? (j['stockAmount'] as String? ?? '').trim()
+        : (apiStockAmount != null ? '$apiStockAmount in stock' : null);
+    final String? stockNormalized = normalizeStockDisplay(rawStock);
 
     return Product(
       id: id,
@@ -269,9 +273,7 @@ class Product {
       image: imageStr,
       images: imagesParsed,
       inStock: j['inStock'] ?? apiInStock,
-      stockAmount: (j['stockAmount'] as String? ?? '').trim().isNotEmpty
-          ? (j['stockAmount'] as String? ?? '').trim()
-          : (apiStockAmount != null ? "$apiStockAmount in stock" : null),
+      stockAmount: stockNormalized,
       category: category,
       categoryList: categoryList,
       age: decodeHtmlEntities(j['age'] as String? ?? ''),

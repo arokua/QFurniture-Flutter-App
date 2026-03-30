@@ -36,11 +36,11 @@ class CategoryRepository {
 
   List<Category> _fallbackCategories() {
     return [
-      const Category(id: 1, name: 'Toys and Educational Resources', slug: 'toys-and-educational-resources', parent: 0),
-      const Category(id: 2, name: 'Furniture and Preschool Equipment', slug: 'furniture-and-preschool-equipment', parent: 0),
-      const Category(id: 3, name: 'Value Educational Packages', slug: 'bundles', parent: 0),
-      const Category(id: 4, name: 'Homewares', slug: 'homewares', parent: 0),
-      const Category(id: 5, name: 'By Age Group', slug: 'by-age-group', parent: 0),
+      const Category(id: 1, name: 'Toys and Educational Resources', slug: 'toys-and-educational-resources', parent: 0, menuOrder: 10),
+      const Category(id: 2, name: 'Furniture and Preschool Equipment', slug: 'furniture-and-preschool-equipment', parent: 0, menuOrder: 20),
+      const Category(id: 3, name: 'Value Educational Packages', slug: 'bundles', parent: 0, menuOrder: 40),
+      const Category(id: 4, name: 'Homewares', slug: 'homewares', parent: 0, menuOrder: 30),
+      const Category(id: 5, name: 'By Age Group', slug: 'by-age-group', parent: 0, menuOrder: 15),
     ];
   }
 }

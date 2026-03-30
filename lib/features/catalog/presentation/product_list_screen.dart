@@ -8,10 +8,29 @@ import '../../../config/store_cart_api_service.dart';
 import '../../cart/data/cart_provider.dart';
 import '../data/favorites_provider.dart';
 import '../domain/product.dart';
+import '../domain/catalog_category_groups.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../services/product_sync_service.dart';
+
+/// Search name, SKU, categories, material, color — not full HTML description (avoids jank/OOM).
+bool productMatchesSearchQuery(Product p, String queryLower) {
+  if (queryLower.isEmpty) return true;
+  if (p.name.toLowerCase().contains(queryLower)) return true;
+  if (p.sku != null && p.sku!.toLowerCase().contains(queryLower)) return true;
+  for (final c in p.categoryList) {
+    if (c.toLowerCase().contains(queryLower)) return true;
+  }
+  if (p.category.isNotEmpty && p.category.toLowerCase().contains(queryLower)) {
+    return true;
+  }
+  final m = p.material;
+  if (m != null && m.toLowerCase().contains(queryLower)) return true;
+  final col = p.color;
+  if (col != null && col.toLowerCase().contains(queryLower)) return true;
+  return false;
+}
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 final selectedCategoryProvider = StateProvider<String?>((ref) => null);
@@ -58,12 +77,8 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
 
   if (searchQuery.isNotEmpty) {
     final query = searchQuery.toLowerCase();
-    filtered = filtered
-        .where((p) =>
-            p.name.toLowerCase().contains(query) ||
-            p.description.toLowerCase().contains(query) ||
-            (p.sku?.toLowerCase().contains(query) ?? false))
-        .toList();
+    filtered =
+        filtered.where((p) => productMatchesSearchQuery(p, query)).toList();
   }
 
   if (selectedCategory != null) {
@@ -209,42 +224,50 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   error: (_, __) => const SizedBox.shrink(),
                   data: (data) {
                     if (data.isEmpty) return const SizedBox.shrink();
-                    final categories = ['All', ...data];
+                    final allProds =
+                        ref.watch(allProductsProvider).value ?? [];
+                    final sections = groupCatalogCategories(data);
                     return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         SizedBox(
                           height: 40,
-                          child: ListView.builder(
+                          child: ListView(
                             scrollDirection: Axis.horizontal,
-                            itemCount: categories.length,
-                            itemBuilder: (context, index) {
-                              final category = categories[index];
-                              final isSelected = selectedCategory == null
-                                  ? category == 'All'
-                                  : selectedCategory == category;
-                              
-                              final allProds = ref.watch(allProductsProvider).value ?? [];
-                              final count = category == 'All' 
-                                ? allProds.length 
-                                : allProds.where((p) => p.categoryList.contains(category)).length;
-
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8.0),
-                                child: FilterChip(
-                                  label: Text('${decodeHtmlEntities(category)} ($count)'),
-                                  selected: isSelected,
-                                  onSelected: (selected) {
-                                    ref
-                                        .read(selectedCategoryProvider.notifier)
-                                        .state = category == 'All' ? null : category;
-                                  },
-                                ),
-                              );
-                            },
+                            children: [
+                              FilterChip(
+                                label: Text('All (${allProds.length})'),
+                                selected: selectedCategory == null,
+                                onSelected: (selected) {
+                                  ref
+                                      .read(selectedCategoryProvider.notifier)
+                                      .state = null;
+                                },
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 8),
+                        ...sections.map(
+                          (section) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _CatalogCategoryGroupTile(
+                              section: section,
+                              selectedCategory: selectedCategory,
+                              colorScheme: Theme.of(context).colorScheme,
+                              textTheme: Theme.of(context).textTheme,
+                              countFor: (String cat) => allProds
+                                  .where((p) => p.categoryList.contains(cat))
+                                  .length,
+                              onSelect: (String? cat) {
+                                ref
+                                    .read(selectedCategoryProvider.notifier)
+                                    .state = cat;
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
                         Row(
                           children: [
                             Text(
@@ -898,6 +921,109 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   const SizedBox(height: 8),
                   Container(height: 18, width: 80, color: Colors.grey[300]),
                 ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One expandable group: three mains on the catalog, subcategories as chips inside.
+class _CatalogCategoryGroupTile extends StatelessWidget {
+  const _CatalogCategoryGroupTile({
+    required this.section,
+    required this.selectedCategory,
+    required this.colorScheme,
+    required this.textTheme,
+    required this.countFor,
+    required this.onSelect,
+  });
+
+  final CatalogCategorySection section;
+  final String? selectedCategory;
+  final ColorScheme colorScheme;
+  final TextTheme textTheme;
+  final int Function(String category) countFor;
+  final void Function(String? category) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = selectedCategory;
+    final selectedInSection =
+        sel != null && section.names.contains(sel);
+    final String? subtitleMsg = sel != null && section.names.contains(sel)
+        ? decodeHtmlEntities(sel)
+        : null;
+
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        key: ValueKey('${section.title}_${selectedCategory ?? 'none'}'),
+        initiallyExpanded: selectedInSection,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        collapsedShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.55),
+          ),
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.55),
+          ),
+        ),
+        backgroundColor:
+            colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+        collapsedBackgroundColor:
+            colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+        title: Text(
+          section.title,
+          style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        subtitle: subtitleMsg == null
+            ? null
+            : Text(
+                subtitleMsg,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+            child: SizedBox(
+              height: 46,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: section.names.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final name = section.names[i];
+                  final isSelected = selectedCategory == name;
+                  final n = countFor(name);
+                  return FilterChip(
+                    label: Text(
+                      '${decodeHtmlEntities(name)} ($n)',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    selected: isSelected,
+                    showCheckmark: false,
+                    onSelected: (v) {
+                      if (v) {
+                        onSelect(name);
+                      } else {
+                        onSelect(null);
+                      }
+                    },
+                  );
+                },
               ),
             ),
           ),

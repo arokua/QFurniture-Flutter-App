@@ -7,6 +7,7 @@ API: https://qtoys.com.au/wp-json/wc/store/v1/products
 Fetches by batch (page/per_page). Writes: image = main URL, images = [main, ...gallery] URLs.
 """
 import json
+import re
 import requests
 from pathlib import Path
 
@@ -18,6 +19,14 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT_FILE = OUT_DIR / "products.json"
 
 PER_PAGE = 100
+
+
+def strip_html_tags(s):
+    """Remove HTML tags from WC stock_availability.text etc."""
+    if s is None or not isinstance(s, str):
+        return s
+    t = re.sub(r"<[^>]+>", " ", s)
+    return re.sub(r"\s+", " ", t).strip()
 
 
 def parse_price(val):
@@ -111,6 +120,9 @@ def normalize_product(p):
         if isinstance(add_cart, dict) and add_cart.get("maximum") is not None:
             mx = add_cart["maximum"]
             stock_amount = f"{mx} in stock"
+
+    if stock_amount:
+        stock_amount = strip_html_tags(stock_amount)
 
     # Attributes: Material (pa_material), Assembly Required, Color
     material = _get_attribute(p, "Material") or _get_attribute(p, "pa_material")

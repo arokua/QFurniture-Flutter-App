@@ -3,6 +3,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_config.dart';
+import '../features/catalog/utils/html_utils.dart';
 
 /// Handles lightweight on-device sync of product metadata from the WooCommerce
 /// Store API.  Images are resolved as remote URLs (displayed via
@@ -178,7 +179,7 @@ class ProductSyncService {
     String? stockAmount;
 
     if (apiStockAmountText != null && apiStockAmountText.trim().isNotEmpty) {
-      stockAmount = apiStockAmountText.trim();
+      stockAmount = normalizeStockDisplay(apiStockAmountText.trim());
     } else if (stockQuantity != null) {
       final quantity = int.tryParse(stockQuantity.toString());
       if (quantity != null && quantity > 0) {
