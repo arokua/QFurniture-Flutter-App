@@ -12,6 +12,7 @@ class StoreCartApiService {
 
   static String get _base => '$kStoreBaseUrl/wp-json/wc/store/v1';
   static Uri get _cartItems => Uri.parse('$_base/cart/items');
+  static Uri get _cartRoot => Uri.parse('$_base/cart');
 
   String? _cookie;
   SharedPreferences? _prefs;
@@ -111,7 +112,28 @@ class StoreCartApiService {
     }
   }
 
-  /// GET cart items; returns list of {id, key, quantity} for remove/update.
+  /// GET full cart (Store API) — items, totals, shipping_rates, etc.
+  /// [success] is false when the request failed (do not treat as empty cart).
+  Future<({bool success, Map<String, dynamic>? data})> fetchFullCart() async {
+    try {
+      final res = await http.get(_cartRoot, headers: _headers).timeout(
+            const Duration(seconds: 15),
+          );
+      await setCookieFromResponse(res);
+      if (res.statusCode != 200) {
+        return (success: false, data: null);
+      }
+      final data = jsonDecode(res.body);
+      if (data is Map<String, dynamic>) {
+        return (success: true, data: data);
+      }
+      return (success: false, data: null);
+    } catch (_) {
+      return (success: false, data: null);
+    }
+  }
+
+  /// GET cart items (lightweight list for keys / product ids).
   Future<List<({int id, String key, int quantity})>> getItems() async {
     try {
       final res = await http.get(_cartItems, headers: _headers).timeout(
@@ -139,16 +161,29 @@ class StoreCartApiService {
     }
   }
 
-  /// Remove item from store cart by cart item key (v1 delete endpoint).
+  /// Remove item from store cart (Store API: POST /cart/remove-item).
   Future<bool> removeItem(String key) async {
     if (!hasSession) return false;
     try {
-      final uri = Uri.parse('$_base/cart/items/$key');
-      final res = await http.delete(uri, headers: _headers).timeout(
+      final uri = Uri.parse('$_base/cart/remove-item').replace(
+        queryParameters: {'key': key},
+      );
+      final res = await http.post(uri, headers: _headers).timeout(
             const Duration(seconds: 10),
           );
+      await setCookieFromResponse(res);
       if (res.statusCode >= 200 && res.statusCode < 300) return true;
-      return false;
+      // Some stacks still expose DELETE /cart/items/{key}
+      try {
+        final legacy = Uri.parse('$_base/cart/items/$key');
+        final res2 = await http.delete(legacy, headers: _headers).timeout(
+              const Duration(seconds: 10),
+            );
+        await setCookieFromResponse(res2);
+        return res2.statusCode >= 200 && res2.statusCode < 300;
+      } catch (_) {
+        return false;
+      }
     } catch (_) {
       return false;
     }
@@ -171,29 +206,49 @@ class StoreCartApiService {
     return updateItem(entry.key, quantity);
   }
 
-  /// Update quantity for a cart item by key (PUT items/:key).
+  /// Update quantity (Store API: POST /cart/update-item?key=&quantity=).
   Future<bool> updateItem(String key, int quantity) async {
     if (!hasSession) return false;
     if (quantity <= 0) return removeItem(key);
     try {
-      final uri = Uri.parse('$_base/cart/items/$key?quantity=$quantity');
-      final res = await http.put(uri, headers: _headers).timeout(
+      final uri = Uri.parse('$_base/cart/update-item').replace(
+        queryParameters: {
+          'key': key,
+          'quantity': quantity.toString(),
+        },
+      );
+      final res = await http.post(uri, headers: _headers).timeout(
             const Duration(seconds: 10),
           );
-      return res.statusCode >= 200 && res.statusCode < 300;
+      await setCookieFromResponse(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) return true;
+      try {
+        final legacy =
+            Uri.parse('$_base/cart/items/$key').replace(queryParameters: {
+          'quantity': quantity.toString(),
+        });
+        final res2 = await http.put(legacy, headers: _headers).timeout(
+              const Duration(seconds: 10),
+            );
+        await setCookieFromResponse(res2);
+        return res2.statusCode >= 200 && res2.statusCode < 300;
+      } catch (_) {
+        return false;
+      }
     } catch (_) {
       return false;
     }
   }
 
-  /// Remove all items from store cart (DELETE cart/items).
+  /// Remove all items from store cart (DELETE empty cart — legacy; else clear line-by-line).
   Future<bool> clearCart() async {
     if (!hasSession) return true;
     try {
-      final res = await http.delete(_cartItems, headers: _headers).timeout(
-            const Duration(seconds: 10),
-          );
-      return res.statusCode >= 200 && res.statusCode < 300;
+      final items = await getItems();
+      for (final e in items) {
+        await removeItem(e.key);
+      }
+      return true;
     } catch (_) {
       return false;
     }

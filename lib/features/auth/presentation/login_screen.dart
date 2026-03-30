@@ -52,9 +52,22 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _handleSkip() {
-    AuthService.instance.signIn(email: 'guest@qtoys.com.au', password: 'password123');
-    context.go(AppRoutes.home);
+  Future<void> _handleSkip() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    final result = await AuthService.instance.signIn(
+      email: 'guest@qtoys.com.au',
+      password: 'password123',
+    );
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+    if (result.isSuccess) {
+      context.go(AppRoutes.home);
+    } else {
+      setState(() => _error = result.errorMessage ?? 'Guest login is not available.');
+    }
   }
 
   @override

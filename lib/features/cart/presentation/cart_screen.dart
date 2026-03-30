@@ -297,6 +297,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
       if (!context.mounted) return;
 
       if (success) {
+        ref.invalidate(storeCartTotalsProvider);
         // Open the WooCommerce checkout page
         StoreWebViewScreen.push(context, storeCheckoutUrl);
       } else {
@@ -322,6 +323,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final asyncProducts = ref.watch(cartSummaryProductsProvider);
+    final totalsAsync = ref.watch(storeCartTotalsProvider);
 
     return asyncProducts.when(
       data: (products) {
@@ -329,13 +331,15 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
           final qty = widget.cart.firstWhere((i) => i.productId == p.id).quantity;
           return total + (p.price * qty);
         });
+        final currency =
+            products.isNotEmpty ? products.first.currency : 'AUD';
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 offset: const Offset(0, -4),
                 blurRadius: 10,
               ),
@@ -349,21 +353,56 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Total:',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        const Text(
-                          'Shipping calculated at checkout',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Subtotal (catalog):',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          totalsAsync.when(
+                            data: (totals) => Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  totals?.shippingLine ??
+                                      'Shipping: calculated at checkout (Store API)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.65),
+                                  ),
+                                ),
+                                if (totals?.orderTotalLine != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    totals!.orderTotalLine!,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            loading: () => const SizedBox.shrink(),
+                            error: (_, __) => Text(
+                              'Shipping: calculated at checkout',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     Text(
-                      '\$${cartTotal.toStringAsFixed(2)}',
+                      '$currency ${cartTotal.toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,

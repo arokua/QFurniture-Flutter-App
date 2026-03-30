@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,17 +109,60 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     }
   }
 
-  /// Close handler: sync cookies back, refresh cart, then pop.
-  Future<void> _handleClose() async {
+  /// Same-origin fetch includes HttpOnly session cookies — updates app cart even when
+  /// `document.cookie` cannot see the WooCommerce session cookie.
+  Future<void> _pullCartJsonFromWebView() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  return fetch('/wp-json/wc/store/v1/cart', {
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  }).then(function(r) { return r.text(); });
+})()
+''');
+      String text = result.toString().trim();
+      if (text.startsWith('"') && text.endsWith('"')) {
+        try {
+          text = jsonDecode(text) as String;
+        } catch (_) {
+          text = text.substring(1, text.length - 1).replaceAll(r'\"', '"');
+        }
+      }
+      if (text.isEmpty || text == 'null') return;
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) {
+        await ref.read(cartProvider.notifier).applyStoreCartFromJson(decoded);
+      }
+    } catch (e) {
+      debugPrint('WebView cart JSON pull error: $e');
+    }
+  }
+
+  /// Sync cart + cookies after checkout/cart changes in the WebView.
+  Future<void> _syncAfterWebView() async {
+    await _pullCartJsonFromWebView();
     await _syncCookiesBack();
-    // Refresh local cart from remote to pick up any changes made in WebView
-    ref.read(cartProvider.notifier).refreshFromRemote();
+    await ref.read(cartProvider.notifier).refreshFromRemote();
+  }
+
+  /// Close handler: pull cart JSON (HttpOnly-safe), cookies, then server refresh.
+  Future<void> _handleClose() async {
+    await _syncAfterWebView();
     if (mounted) context.pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _syncAfterWebView();
+        if (!context.mounted) return;
+        context.pop();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Store'),
         leading: IconButton(
@@ -147,6 +192,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               )
             : WebViewWidget(controller: _controller),
       ),
+    ),
     );
   }
 }

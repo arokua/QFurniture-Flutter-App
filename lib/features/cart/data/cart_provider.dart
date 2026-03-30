@@ -3,6 +3,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../domain/cart_item.dart';
+import 'store_cart_json.dart';
+
+/// Store API totals/shipping (after [cartProvider] changes, when session exists).
+final storeCartTotalsProvider =
+    FutureProvider.autoDispose<StoreCartTotalsView?>((ref) async {
+  final cart = ref.watch(cartProvider);
+  if (cart.isEmpty) return null;
+  if (!StoreCartApiService.instance.hasSession) return null;
+  final r = await StoreCartApiService.instance.fetchFullCart();
+  if (!r.success || r.data == null) return null;
+  return StoreCartTotalsView.fromCartJson(r.data!);
+});
 
 class CartNotifier extends StateNotifier<List<CartItem>> {
   CartNotifier() : super([]) {
@@ -24,17 +36,12 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
       } catch (_) {}
     }
     
-    // Remote sync: if we have a session, fetch remote items to ensure sync
+    // Remote sync: full cart GET distinguishes success vs failure (avoid wiping on error).
     if (StoreCartApiService.instance.hasSession) {
-      final remoteItems = await StoreCartApiService.instance.getItems();
-      if (remoteItems.isNotEmpty) {
-        // Merge strategy: remote takes precedence or merge based on ID
-        // For simplicity here, let's use the remote state as source of truth if session exists
-        state = remoteItems.map((e) => CartItem(
-          productId: e.id,
-          quantity: e.quantity,
-        )).toList();
-        _saveCart();
+      final remote = await StoreCartApiService.instance.fetchFullCart();
+      if (remote.success && remote.data != null) {
+        state = cartItemsFromStoreCartJson(remote.data!);
+        await _saveCart();
       }
     }
   }
@@ -89,41 +96,28 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
   }
 
   /// Re-fetch cart items from remote (WooCommerce Store API) and update local state.
-  /// Call this after WebView closes to sync any changes the user made in the browser.
+  /// Call this after WebView closes if [StoreCartApiService] has a session cookie.
   Future<void> refreshFromRemote() async {
     if (!StoreCartApiService.instance.hasSession) return;
     try {
-      final remoteItems = await StoreCartApiService.instance.getItems();
-      if (remoteItems.isNotEmpty) {
-        state = remoteItems
-            .map((e) => CartItem(productId: e.id, quantity: e.quantity))
-            .toList();
-      } else {
-        // Remote cart is empty — clear local
-        state = [];
-      }
-      _saveCart();
+      final remote = await StoreCartApiService.instance.fetchFullCart();
+      if (!remote.success || remote.data == null) return;
+      state = cartItemsFromStoreCartJson(remote.data!);
+      await _saveCart();
     } catch (_) {
-      // Silently fail; keep local state as-is
+      // Keep local state as-is
     }
   }
 
-  /// Force fetch latest prices and stock from remote for items currently in cart.
+  /// Apply cart line items from WebView `fetch('/wp-json/wc/store/v1/cart')` (works when cookies are HttpOnly).
+  Future<void> applyStoreCartFromJson(Map<String, dynamic> json) async {
+    state = cartItemsFromStoreCartJson(json);
+    await _saveCart();
+  }
+
+  /// Reconcile local cart with remote line items (same as refresh).
   Future<void> syncStocks() async {
-    final list = [...state];
-    bool changed = false;
-    for (int i = 0; i < list.length; i++) {
-      try {
-        final res = await StoreCartApiService.instance.getItems();
-        // Matching logic would go here if we want to sync with remote cart...
-        // But for now, let's just use the Store API getItems to reconcile if possible.
-        if (res.isNotEmpty) {
-           state = res.map((e) => CartItem(productId: e.id, quantity: e.quantity)).toList();
-           _saveCart();
-           return;
-        }
-      } catch (_) {}
-    }
+    await refreshFromRemote();
   }
 }
 

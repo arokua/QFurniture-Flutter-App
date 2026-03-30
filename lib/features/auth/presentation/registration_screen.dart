@@ -21,13 +21,20 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   bool _isLoading = false;
   String? _error;
 
-  /// Role options: slug → display label
-  static const _roles = <String, String>{
-    'customers': 'Normal',
+  /// Role options: slug → display label (dropdown order: B2B first, then retail, then normal).
+  static const _roleLabels = <String, String>{
     'wholesale': 'Wholesale',
-    'retailer': 'Retailer',
     'dropshipping': 'Dropship',
+    'retailer': 'Retailer',
+    'customers': 'Normal',
   };
+
+  static const _roleOrder = <String>[
+    'wholesale',
+    'dropshipping',
+    'retailer',
+    'customers',
+  ];
 
   String _selectedRole = 'customers';
 
@@ -167,10 +174,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
-                  items: _roles.entries
-                      .map((e) => DropdownMenuItem(
-                            value: e.key,
-                            child: Text(e.value),
+                  items: _roleOrder
+                      .map((k) => DropdownMenuItem(
+                            value: k,
+                            child: Text(_roleLabels[k] ?? k),
                           ))
                       .toList(),
                   onChanged: (v) {
@@ -200,7 +207,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               validator: (v) {
                                 if (!_needsBusinessFields) return null;
                                 if (v == null || v.trim().isEmpty) {
-                                  return 'Website is required for ${_roles[_selectedRole]}';
+                                  return 'Website is required for ${_roleLabels[_selectedRole]}';
                                 }
                                 final url = v.trim();
                                 if (!url.startsWith('http://') &&
@@ -230,7 +237,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               validator: (v) {
                                 if (!_needsBusinessFields) return null;
                                 if (v == null || v.trim().isEmpty) {
-                                  return 'Phone is required for ${_roles[_selectedRole]}';
+                                  return 'Phone is required for ${_roleLabels[_selectedRole]}';
                                 }
                                 final digits = v.trim().replaceAll(RegExp(r'\D'), '');
                                 if (digits.length != 10) {
@@ -259,7 +266,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               validator: (v) {
                                 if (!_needsBusinessFields) return null;
                                 if (v == null || v.trim().isEmpty) {
-                                  return 'ABN is required for ${_roles[_selectedRole]}';
+                                  return 'ABN is required for ${_roleLabels[_selectedRole]}';
                                 }
                                 final digits = v.trim();
                                 if (digits.length != 12) {
