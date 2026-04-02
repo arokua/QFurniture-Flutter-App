@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="brand_brown">#795548</color>
+    <!-- Match Flutter splash / brand green (no brown flash before first frame). -->
+    <color name="brand_green">#FF8BC34A</color>
 </resources>

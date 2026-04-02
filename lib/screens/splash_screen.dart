@@ -46,25 +46,16 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  static const _brandGreen = Color(0xFF8BC34A);
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: cs.surface,
+      backgroundColor: _brandGreen,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        // Subtle warm gradient matching the brand brown palette
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              const Color(0xFF689F38), // darker green
-              const Color(0xFF8BC34A), // brand green
-            ],
-          ),
-        ),
+        color: _brandGreen,
         child: Center(
           child: FadeTransition(
             opacity: _fade,
@@ -81,40 +72,10 @@ class _SplashScreenState extends State<SplashScreen>
                       width: 180,
                       height: 180,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => _buildFallback(cs),
+                      errorBuilder: (_, __, ___) => _buildFallback(),
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  // ── Brand name ────────────────────────────────────────────
-                  Text(
-                    'qtoys',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'learning through play',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'TWO DECADES OF ENGINEERING CHILDREN\'S DREAMS',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 10,
-                      letterSpacing: 0.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  
                 ],
               ),
             ),
@@ -124,7 +85,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildFallback(ColorScheme cs) {
+  Widget _buildFallback() {
     return Container(
       width: 180,
       height: 180,

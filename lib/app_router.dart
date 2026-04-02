@@ -30,13 +30,18 @@ final router = GoRouter(
   debugLogDiagnostics: true,
   refreshListenable: AuthService.instance,
   redirect: (ctx, state) {
-    final isSignedIn = AuthService.instance.isSignedIn;
-    final isLoggingIn = state.uri.path == AppRoutes.login;
-    final isSplash = state.uri.path == AppRoutes.root;
+    final canAccess = AuthService.instance.canAccessApp;
+    final hasAccount = AuthService.instance.isSignedIn;
+    final path = state.uri.path;
+    final isSplash = path == AppRoutes.root;
+    // Login / register when not yet allowed into the app (no account and not guest browse).
+    final isPublicAuth = path == AppRoutes.login || path == AppRoutes.register;
 
     if (isSplash) return null;
-    if (!isSignedIn && !isLoggingIn) return AppRoutes.login;
-    if (isSignedIn && isLoggingIn) return AppRoutes.home;
+    if (!canAccess && !isPublicAuth) return AppRoutes.login;
+    // Logged-in users skip auth screens; guests may still open Login to upgrade to an account.
+    if (hasAccount && path == AppRoutes.login) return AppRoutes.home;
+    if (hasAccount && path == AppRoutes.register) return AppRoutes.home;
     return null;
   },
   routes: [
@@ -85,7 +90,11 @@ final router = GoRouter(
       path: AppRoutes.store,
       builder: (ctx, st) {
         final url = st.uri.queryParameters['url'] ?? storeCartUrl;
-        return StoreWebViewScreen(initialUrl: url);
+        final autoLogin = st.uri.queryParameters['autologin'] == '1';
+        return StoreWebViewScreen(
+          initialUrl: url,
+          attemptWebLogin: autoLogin,
+        );
       },
     ),
   ],

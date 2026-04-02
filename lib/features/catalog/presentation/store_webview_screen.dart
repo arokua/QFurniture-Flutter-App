@@ -7,24 +7,40 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../../config/store_cart_api_service.dart';
+import '../../../config/store_config.dart';
+import '../../../services/auth_service.dart';
 import '../../cart/data/cart_provider.dart';
 
 /// In-app WebView for the store (qtoys.com.au). Preserves session/cookies
-/// in this WebView context so add-to-cart and checkout work.
+/// in this WebView context so add_to_cart and checkout work.
 /// On close, syncs cookies back to StoreCartApiService and refreshes the
 /// mobile cart from remote state.
 class StoreWebViewScreen extends ConsumerStatefulWidget {
-  const StoreWebViewScreen({super.key, required this.initialUrl});
+  const StoreWebViewScreen({
+    super.key,
+    required this.initialUrl,
+    this.attemptWebLogin = false,
+  });
 
   final String initialUrl;
+  final bool attemptWebLogin;
 
   /// Opens the store URL: in-app WebView on mobile/desktop, new tab on web.
-  static void push(BuildContext context, String url) {
+  static void push(
+    BuildContext context,
+    String url, {
+    bool attemptWebLogin = false,
+  }) {
     if (kIsWeb) {
       launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
       return;
     }
-    context.push(Uri(path: '/store', queryParameters: {'url': url}).toString());
+    context.push(
+      Uri(path: '/store', queryParameters: {
+        'url': url,
+        if (attemptWebLogin) 'autologin': '1',
+      }).toString(),
+    );
   }
 
   @override
@@ -35,6 +51,8 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
 class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   late final WebViewController _controller;
   final _cookieManager = WebViewCookieManager();
+  bool _autoLoginSubmitted = false;
+  bool _authBootstrapDone = false;
 
   @override
   void initState() {
@@ -46,7 +64,16 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {},
-          onPageFinished: (_) {},
+          onPageFinished: (_) async {
+            if (!widget.attemptWebLogin) return;
+            if (!_authBootstrapDone) {
+              await _bootstrapWebSession();
+              return;
+            }
+            if (!_autoLoginSubmitted) {
+              await _submitWordPressLoginIfNeeded();
+            }
+          },
           onWebResourceError: (e) {
             debugPrint('StoreWebView error: ${e.description}');
           },
@@ -64,8 +91,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     if (rawCookie != null && rawCookie.isNotEmpty) {
       // Parse "name1=val1; name2=val2" into individual cookies
       final parts = rawCookie.split(';').map((s) => s.trim()).where((s) => s.isNotEmpty);
-      final storeUri = Uri.parse(widget.initialUrl);
-      final domain = storeUri.host; // e.g. qtoys.com.au
+      final storeUri = Uri.parse(kStoreBaseUrl);
+      final domain = storeUri.host;
 
       for (final part in parts) {
         final eqIndex = part.indexOf('=');
@@ -87,7 +114,98 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       }
     }
 
+    if (widget.attemptWebLogin) {
+      // Load same-origin first, then establish session via custom JWT->cookie bridge.
+      _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+      return;
+    }
     _controller.loadRequest(Uri.parse(widget.initialUrl));
+  }
+
+  Future<void> _bootstrapWebSession() async {
+    _authBootstrapDone = true;
+    final bridged = await _tryJwtCookieBridge();
+    if (bridged) {
+      await _controller.loadRequest(Uri.parse(widget.initialUrl));
+      return;
+    }
+    // Fallback: WooCommerce my-account login (not wp-login.php).
+    if (AuthService.instance.hasWebLoginCredentials) {
+      final loginUrl = storeMyAccountLoginUrl(
+        accountType: AuthService.instance.webAccountTypeForStoreLogin,
+      );
+      await _controller.loadRequest(
+        Uri.parse(loginUrl).replace(
+          queryParameters: {
+            ...Uri.parse(loginUrl).queryParameters,
+            'redirect_to': widget.initialUrl,
+          },
+        ),
+      );
+      _autoLoginSubmitted = false;
+      return;
+    }
+    await _controller.loadRequest(Uri.parse(widget.initialUrl));
+  }
+
+  Future<bool> _tryJwtCookieBridge() async {
+    final token = AuthService.instance.jwtToken;
+    if (token == null || token.isEmpty) return false;
+    final bridgePath = Uri.parse(jwtCookieBridgeUrl).path;
+    final js = '''
+(function() {
+  return fetch('$bridgePath', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ${_escapeJs(token)}'
+    },
+    body: JSON.stringify({ source: 'flutter_app_webview' })
+  }).then(function(r) {
+    return r.status >= 200 && r.status < 300 ? 'ok' : 'fail_' + r.status;
+  }).catch(function() { return 'error'; });
+})()
+''';
+    try {
+      final result = await _controller.runJavaScriptReturningResult(js);
+      final text = result.toString().replaceAll('"', '').trim();
+      return text == 'ok';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _escapeJs(String s) => s
+      .replaceAll(r'\', r'\\')
+      .replaceAll("'", r"\'")
+      .replaceAll('\n', r'\n')
+      .replaceAll('\r', '');
+
+  Future<void> _submitWordPressLoginIfNeeded() async {
+    if (_autoLoginSubmitted) return;
+    final email = AuthService.instance.webLoginEmail;
+    final password = AuthService.instance.webLoginPassword;
+    if (email == null || password == null) return;
+    _autoLoginSubmitted = true;
+    final js = '''
+(function() {
+  var f = document.querySelector('form.woocommerce-form-login');
+  if (!f) f = document.querySelector('form[action*="login"]');
+  var u = document.querySelector('#username') || (f && f.querySelector('input[name="username"]'));
+  var p = document.querySelector('#password') || (f && f.querySelector('input[name="password"]'));
+  if (!u || !p || !f) return 'no-login-form';
+  u.value = '${_escapeJs(email)}';
+  p.value = '${_escapeJs(password)}';
+  f.submit();
+  return 'submitted';
+})();
+''';
+    try {
+      await _controller.runJavaScriptReturningResult(js);
+    } catch (e) {
+      debugPrint('WebView auto-login submit error: $e');
+    }
   }
 
   /// Read cookies back from the WebView via JavaScript and update

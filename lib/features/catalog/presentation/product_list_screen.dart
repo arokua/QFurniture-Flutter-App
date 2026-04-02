@@ -8,11 +8,12 @@ import '../../../config/store_cart_api_service.dart';
 import '../../cart/data/cart_provider.dart';
 import '../data/favorites_provider.dart';
 import '../domain/product.dart';
-import '../domain/catalog_category_groups.dart';
+import 'category_picker_sheet.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../services/product_sync_service.dart';
+import '../../../utils/user_facing_errors.dart';
 
 /// Search name, SKU, categories, material, color — not full HTML description (avoids jank/OOM).
 bool productMatchesSearchQuery(Product p, String queryLower) {
@@ -47,24 +48,6 @@ final allProductsProvider = FutureProvider<List<Product>>((ref) async {
   ref.watch(refreshTriggerProvider);
   final repo = ref.watch(productRepoProvider);
   return repo.getAll();
-});
-
-final categoriesProvider = FutureProvider<List<String>>((ref) async {
-  final products = await ref.watch(allProductsProvider.future);
-  final allCats = products
-      .expand((p) => p.categoryList)
-      .map((c) => c.trim())
-      .where((c) => c.isNotEmpty)
-      .toSet()
-      .toList();
-  allCats.sort((a, b) {
-    bool isMainA = kMainCategories.contains(a);
-    bool isMainB = kMainCategories.contains(b);
-    if (isMainA && !isMainB) return -1;
-    if (!isMainA && isMainB) return 1;
-    return a.compareTo(b);
-  });
-  return allCats;
 });
 
 final filteredProductsProvider = Provider<List<Product>>((ref) {
@@ -140,6 +123,18 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.category_outlined),
+          tooltip: 'Browse categories',
+          onPressed: () {
+            showCategoryPickerSheet(
+              context,
+              onSelected: (name) {
+                ref.read(selectedCategoryProvider.notifier).state = name;
+              },
+            );
+          },
+        ),
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -217,92 +212,61 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   ),
                   onChanged: _onSearchChanged,
                 ),
-                const SizedBox(height: 12),
-                // Category Filter: all categories that appear in any product
-                ref.watch(categoriesProvider).when(
-                  loading: () => const SizedBox(height: 40),
-                  error: (_, __) => const SizedBox.shrink(),
-                  data: (data) {
-                    if (data.isEmpty) return const SizedBox.shrink();
-                    final allProds =
-                        ref.watch(allProductsProvider).value ?? [];
-                    final sections = groupCatalogCategories(data);
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          height: 40,
-                          child: ListView(
-                            scrollDirection: Axis.horizontal,
-                            children: [
-                              FilterChip(
-                                label: Text('All (${allProds.length})'),
-                                selected: selectedCategory == null,
-                                onSelected: (selected) {
-                                  ref
-                                      .read(selectedCategoryProvider.notifier)
-                                      .state = null;
-                                },
+                const SizedBox(height: 8),
+                if (selectedCategory != null) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Category: ${decodeHtmlEntities(selectedCategory)}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w600,
                               ),
-                            ],
-                          ),
                         ),
-                        const SizedBox(height: 8),
-                        ...sections.map(
-                          (section) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _CatalogCategoryGroupTile(
-                              section: section,
-                              selectedCategory: selectedCategory,
-                              colorScheme: Theme.of(context).colorScheme,
-                              textTheme: Theme.of(context).textTheme,
-                              countFor: (String cat) => allProds
-                                  .where((p) => p.categoryList.contains(cat))
-                                  .length,
-                              onSelect: (String? cat) {
-                                ref
-                                    .read(selectedCategoryProvider.notifier)
-                                    .state = cat;
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Text(
-                              'Sort:',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(width: 8),
-                            DropdownButton<String>(
-                              value: sortOrder,
-                              isDense: true,
-                              items: const [
-                                DropdownMenuItem(
-                                    value: 'name_asc', child: Text('Name A–Z')),
-                                DropdownMenuItem(
-                                    value: 'name_desc',
-                                    child: Text('Name Z–A')),
-                                DropdownMenuItem(
-                                    value: 'price_asc',
-                                    child: Text('Price: low to high')),
-                                DropdownMenuItem(
-                                    value: 'price_desc',
-                                    child: Text('Price: high to low')),
-                              ],
-                              onChanged: (v) {
-                                if (v != null) {
-                                  ref.read(sortOrderProvider.notifier).state =
-                                      v;
-                                }
-                              },
-                            ),
-                          ],
-                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 22),
+                        tooltip: 'Clear category',
+                        onPressed: () =>
+                            ref.read(selectedCategoryProvider.notifier).state =
+                                null,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Row(
+                  children: [
+                    Text(
+                      'Sort:',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(width: 8),
+                    DropdownButton<String>(
+                      value: sortOrder,
+                      isDense: true,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'name_asc', child: Text('Name A–Z')),
+                        DropdownMenuItem(
+                            value: 'name_desc', child: Text('Name Z–A')),
+                        DropdownMenuItem(
+                            value: 'price_asc',
+                            child: Text('Price: low to high')),
+                        DropdownMenuItem(
+                            value: 'price_desc',
+                            child: Text('Price: high to low')),
                       ],
-                    );
-                  },
+                      onChanged: (v) {
+                        if (v != null) {
+                          ref.read(sortOrderProvider.notifier).state = v;
+                        }
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -339,15 +303,26 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   },
                   child: allProductsAsync.when(
                     loading: () => _buildLoadingGrid(isGridView),
-                    error: (e, __) => ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        SizedBox(
-                          height: 300,
-                          child: Center(child: Text('Error: $e')),
-                        ),
-                      ],
-                    ),
+                    error: (e, st) {
+                      debugPrint('allProductsProvider error: $e\n$st');
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: 300,
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Text(
+                                  userFacingCatalogError(e),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                     data: (_) {
                       final filteredProducts = ref.watch(filteredProductsProvider);
 
@@ -601,28 +576,41 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 ],
               ),
             ),
-            // Product Info
+            // Product Info (clip: sale price row must not overflow tight grid cells)
             Expanded(
               flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(10.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    Text(
-                      decodeHtmlEntities(product.name),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                        height: 1.2,
+              child: ClipRect(
+                child: Padding(
+                  padding: const EdgeInsets.all(10.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: Text(
+                            decodeHtmlEntities(product.name),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              height: 1.2,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const Spacer(),
-                    _buildPriceRow(context, product),
-                  ],
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: _buildPriceRow(context, product),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -649,43 +637,47 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     if (product.onSale &&
         product.regularPrice != null &&
         product.salePrice != null) {
-      return Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 6,
-        runSpacing: 4,
-        children: [
-          Text(
-            '${product.currency} ${product.salePrice!.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          Text(
-            '${product.currency} ${product.regularPrice!.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey[600],
-              decoration: TextDecoration.lineThrough,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.error,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Text(
-              'Sale',
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${product.currency} ${product.salePrice!.toStringAsFixed(2)}',
               style: TextStyle(
-                color: Colors.white,
-                fontSize: 9,
                 fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: theme.colorScheme.primary,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Text(
+              '${product.currency} ${product.regularPrice!.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+                decoration: TextDecoration.lineThrough,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.error,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'Sale',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
     return Text(
@@ -821,36 +813,48 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 ],
               ),
             ),
-            // Product Info
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      decodeHtmlEntities(product.name),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (product.category.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        decodeHtmlEntities(product.category),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
+              child: SizedBox(
+                height: 120,
+                child: ClipRect(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          decodeHtmlEntities(product.name),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    _buildPriceRow(context, product),
-                  ],
+                        if (product.category.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            decodeHtmlEntities(product.category),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const Spacer(),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: _buildPriceRow(context, product),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -921,109 +925,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   const SizedBox(height: 8),
                   Container(height: 18, width: 80, color: Colors.grey[300]),
                 ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// One expandable group: three mains on the catalog, subcategories as chips inside.
-class _CatalogCategoryGroupTile extends StatelessWidget {
-  const _CatalogCategoryGroupTile({
-    required this.section,
-    required this.selectedCategory,
-    required this.colorScheme,
-    required this.textTheme,
-    required this.countFor,
-    required this.onSelect,
-  });
-
-  final CatalogCategorySection section;
-  final String? selectedCategory;
-  final ColorScheme colorScheme;
-  final TextTheme textTheme;
-  final int Function(String category) countFor;
-  final void Function(String? category) onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final sel = selectedCategory;
-    final selectedInSection =
-        sel != null && section.names.contains(sel);
-    final String? subtitleMsg = sel != null && section.names.contains(sel)
-        ? decodeHtmlEntities(sel)
-        : null;
-
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        key: ValueKey('${section.title}_${selectedCategory ?? 'none'}'),
-        initiallyExpanded: selectedInSection,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        collapsedShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.55),
-          ),
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.55),
-          ),
-        ),
-        backgroundColor:
-            colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
-        collapsedBackgroundColor:
-            colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
-        title: Text(
-          section.title,
-          style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        subtitle: subtitleMsg == null
-            ? null
-            : Text(
-                subtitleMsg,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-            child: SizedBox(
-              height: 46,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: section.names.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, i) {
-                  final name = section.names[i];
-                  final isSelected = selectedCategory == name;
-                  final n = countFor(name);
-                  return FilterChip(
-                    label: Text(
-                      '${decodeHtmlEntities(name)} ($n)',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    selected: isSelected,
-                    showCheckmark: false,
-                    onSelected: (v) {
-                      if (v) {
-                        onSelect(name);
-                      } else {
-                        onSelect(null);
-                      }
-                    },
-                  );
-                },
               ),
             ),
           ),
@@ -1243,17 +1144,36 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                 flex: 2,
                 child: FilledButton.icon(
                   onPressed: p.inStock
-                      ? () {
+                      ? () async {
                           ref
                               .read(cartProvider.notifier)
                               .add(p.id, quantity: _quantity);
-                          StoreCartApiService.instance
+                          var remoteOk = await StoreCartApiService.instance
                               .addItem(p.id, quantity: _quantity);
+                          if (!remoteOk) {
+                            final cart = ref.read(cartProvider);
+                            remoteOk = await StoreCartApiService.instance
+                                .syncCartToOnline(
+                              cart
+                                  .map((e) => (
+                                        productId: e.productId,
+                                        quantity: e.quantity,
+                                      ))
+                                  .toList(),
+                            );
+                          }
+                          if (remoteOk) {
+                            await ref
+                                .read(cartProvider.notifier)
+                                .refreshFromRemote();
+                          }
+                          if (!context.mounted) return;
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text(
-                                  'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'),
+                              content: Text(remoteOk
+                                  ? 'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'
+                                  : 'Added locally. Online cart sync failed; try Checkout sync.'),
                               duration: const Duration(seconds: 2),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(

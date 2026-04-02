@@ -4,9 +4,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
-import '../../../config/store_config.dart';
-import 'store_webview_screen.dart';
+import '../../../config/store_cart_api_service.dart';
+import '../../../config/store_link_service.dart';
+import '../../cart/data/cart_provider.dart';
 import '../domain/product.dart';
+import '../../../utils/user_facing_errors.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
   final int productId;
@@ -47,9 +49,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           );
         }
         if (snap.hasError) {
+          debugPrint('ProductDetail error: ${snap.error}');
           return Scaffold(
             appBar: AppBar(),
-            body: Center(child: Text('Error: ${snap.error}')),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  userFacingCatalogError(snap.error),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           );
         }
         // The local data is already fast but might be stale. We render it immediately.
@@ -263,21 +274,67 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
           const SizedBox(height: 24),
         ],
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: FilledButton.icon(
-            onPressed: p.inStock
-                ? () => StoreWebViewScreen.push(context, storeAddToCartUrl(p.id, quantity: 1))
-                : null,
-            icon: const Icon(Icons.open_in_browser, size: 22),
-            label: Text(p.inStock ? 'Check out on store' : 'Out of Stock'),
-            style: FilledButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: p.inStock
+                    ? () async {
+                        ref
+                            .read(cartProvider.notifier)
+                            .add(p.id, quantity: 1);
+                        var remoteOk = await StoreCartApiService.instance
+                            .addItem(p.id, quantity: 1);
+                        if (!remoteOk) {
+                          final cart = ref.read(cartProvider);
+                          remoteOk = await StoreCartApiService.instance
+                              .syncCartToOnline(
+                            cart
+                                .map((e) => (
+                                      productId: e.productId,
+                                      quantity: e.quantity,
+                                    ))
+                                .toList(),
+                          );
+                        }
+                        if (remoteOk) {
+                          await ref
+                              .read(cartProvider.notifier)
+                              .refreshFromRemote();
+                        }
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              remoteOk
+                                  ? 'Added ${decodeHtmlEntities(p.name)} to cart'
+                                  : 'Saved in app. Store sync failed — use “Open on store website”.',
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.shopping_cart_outlined, size: 22),
+                label: Text(p.inStock ? 'Add to cart' : 'Out of Stock'),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
             ),
-          ),
+            if (p.inStock) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: () => StoreLinkService.openAddToCart(p.id, quantity: 1),
+                icon: const Icon(Icons.open_in_browser, size: 20),
+                label: const Text('Open on store website'),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 24),
         _buildProductBenefits(context),

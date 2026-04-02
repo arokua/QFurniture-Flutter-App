@@ -92,8 +92,9 @@ class StoreCartTotalsView {
     return 'Shipping: ${formatMinor(totalShippingMinor)}';
   }
 
-  String? get orderTotalLine {
+  /// Store-reported total (same currency as WooCommerce); optional for future UI.
+  String? get formattedTotal {
     if (totalPriceMinor == null) return null;
-    return 'Order total (incl. tax): ${formatMinor(totalPriceMinor)}';
+    return formatMinor(totalPriceMinor);
   }
 }

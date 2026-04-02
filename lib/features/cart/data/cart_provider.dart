@@ -17,11 +17,16 @@ final storeCartTotalsProvider =
 });
 
 class CartNotifier extends StateNotifier<List<CartItem>> {
+  static const _key = 'cart_items';
+
+  /// Completes after local prefs + optional remote merge (avoids empty flash on cold start).
+  late final Future<void> _loadFuture;
+
   CartNotifier() : super([]) {
-    _loadCart();
+    _loadFuture = _loadCart();
   }
 
-  static const _key = 'cart_items';
+  Future<void> ensureHydrated() => _loadFuture;
 
   Future<void> _loadCart() async {
     final prefs = await SharedPreferences.getInstance();
@@ -35,13 +40,19 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
         )).toList();
       } catch (_) {}
     }
-    
-    // Remote sync: full cart GET distinguishes success vs failure (avoid wiping on error).
+
+    // Remote sync: do not replace a non-empty local cart with an empty remote
+    // (session cookie can point at a different guest cart than the one that had lines).
     if (StoreCartApiService.instance.hasSession) {
       final remote = await StoreCartApiService.instance.fetchFullCart();
       if (remote.success && remote.data != null) {
-        state = cartItemsFromStoreCartJson(remote.data!);
-        await _saveCart();
+        final remoteItems = cartItemsFromStoreCartJson(remote.data!);
+        if (remoteItems.isNotEmpty) {
+          state = remoteItems;
+          await _saveCart();
+        } else if (state.isEmpty) {
+          await _saveCart();
+        }
       }
     }
   }
@@ -102,17 +113,41 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     try {
       final remote = await StoreCartApiService.instance.fetchFullCart();
       if (!remote.success || remote.data == null) return;
-      state = cartItemsFromStoreCartJson(remote.data!);
-      await _saveCart();
+      final remoteItems = cartItemsFromStoreCartJson(remote.data!);
+      // Avoid wiping a local non-empty cart when remote session is empty/mismatched.
+      if (remoteItems.isNotEmpty || state.isEmpty) {
+        state = remoteItems;
+        await _saveCart();
+      }
     } catch (_) {
       // Keep local state as-is
     }
   }
 
   /// Apply cart line items from WebView `fetch('/wp-json/wc/store/v1/cart')` (works when cookies are HttpOnly).
+  /// Does not replace a non-empty local cart with an empty remote (logged-in session can differ from guest lines).
   Future<void> applyStoreCartFromJson(Map<String, dynamic> json) async {
-    state = cartItemsFromStoreCartJson(json);
+    final remoteItems = cartItemsFromStoreCartJson(json);
+    if (remoteItems.isEmpty && state.isNotEmpty) {
+      return;
+    }
+    state = remoteItems;
     await _saveCart();
+  }
+
+  /// After JWT login / registration: push persisted local lines to Store API **before** opening WebView
+  /// so the server cart matches the app; then refresh from remote.
+  Future<void> syncLocalCartToStoreAfterLogin() async {
+    if (state.isEmpty) return;
+    try {
+      final items = state
+          .map((e) => (productId: e.productId, quantity: e.quantity))
+          .toList();
+      final ok = await StoreCartApiService.instance.syncCartToOnline(items);
+      if (ok) {
+        await refreshFromRemote();
+      }
+    } catch (_) {}
   }
 
   /// Reconcile local cart with remote line items (same as refresh).
@@ -123,6 +158,11 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
 
 final cartProvider =
     StateNotifierProvider<CartNotifier, List<CartItem>>((ref) => CartNotifier());
+
+/// First load of [cartProvider] from disk + optional remote merge (no empty flash).
+final cartHydratedProvider = FutureProvider<void>((ref) async {
+  await ref.read(cartProvider.notifier).ensureHydrated();
+});
 
 /// Total number of items (sum of quantities).
 int cartItemCount(List<CartItem> cart) {

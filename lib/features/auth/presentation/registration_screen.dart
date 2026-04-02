@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
 
-class RegistrationScreen extends StatefulWidget {
+class RegistrationScreen extends ConsumerStatefulWidget {
   const RegistrationScreen({super.key});
 
   @override
-  State<RegistrationScreen> createState() => _RegistrationScreenState();
+  ConsumerState<RegistrationScreen> createState() => _RegistrationScreenState();
 }
 
-class _RegistrationScreenState extends State<RegistrationScreen> {
+class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
-  final _nameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _firstNameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _abnController = TextEditingController();
   final _websiteController = TextEditingController();
@@ -46,9 +49,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _emailController.dispose();
-    _nameController.dispose();
     _passwordController.dispose();
+    _firstNameController.dispose();
     _phoneController.dispose();
     _abnController.dispose();
     _websiteController.dispose();
@@ -64,9 +68,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     });
 
     final result = await AuthService.instance.signUp(
+      username: _usernameController.text.trim(),
       email: _emailController.text.trim(),
       password: _passwordController.text.trim(),
-      displayName: _nameController.text.trim(),
+      firstName: _firstNameController.text.trim().isEmpty
+          ? null
+          : _firstNameController.text.trim(),
       role: _selectedRole,
       phone: _needsBusinessFields ? _phoneController.text.trim() : null,
       abn: _needsBusinessFields ? _abnController.text.trim() : null,
@@ -76,7 +83,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     if (mounted) {
       setState(() => _isLoading = false);
       if (result.isSuccess) {
-        // Router redirect will handle navigation via refreshListenable
+        await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
       } else {
         setState(() => _error = result.errorMessage);
       }
@@ -106,30 +113,66 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Join the qtoys family',
+                  'Join the QToys family',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: cs.onSurface.withValues(alpha: 0.6),
                   ),
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 20),
+                Material(
+                  color: cs.primaryContainer.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: cs.primary, size: 22),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'All new accounts are reviewed before wholesale or trade access. '
+                            'Ordering may stay unavailable until your account is approved.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
 
-                // ── Name ────────────────────────────────────────
+                // ── Username / email / password (minimum required) ─────────────
                 TextFormField(
-                  controller: _nameController,
+                  controller: _usernameController,
+                  autofillHints: const [AutofillHints.username],
                   decoration: InputDecoration(
-                    labelText: 'First Name',
-                    prefixIcon: const Icon(Icons.person_outline),
+                    labelText: 'Username',
+                    helperText: 'Your login name for the store (letters, numbers, . _ -)',
+                    prefixIcon: const Icon(Icons.alternate_email),
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Name is required' : null,
+                  textCapitalization: TextCapitalization.none,
+                  autocorrect: false,
+                  validator: (v) {
+                    final s = v?.trim() ?? '';
+                    if (s.isEmpty) return 'Username is required';
+                    if (s.length < 3) return 'At least 3 characters';
+                    if (s.length > 60) return 'At most 60 characters';
+                    if (!RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$').hasMatch(s)) {
+                      return 'Use letters, numbers, dots, underscores, or hyphens';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 
-                // ── Email ───────────────────────────────────────
                 TextFormField(
                   controller: _emailController,
+                  autofillHints: const [AutofillHints.email],
                   decoration: InputDecoration(
                     labelText: 'Email',
                     prefixIcon: const Icon(Icons.email_outlined),
@@ -147,9 +190,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ── Password ────────────────────────────────────
                 TextFormField(
                   controller: _passwordController,
+                  autofillHints: const [AutofillHints.newPassword],
                   decoration: InputDecoration(
                     labelText: 'Password',
                     prefixIcon: const Icon(Icons.lock_outline),
@@ -162,6 +205,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                     if (v.trim().length < 6) return 'At least 6 characters';
                     return null;
                   },
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _firstNameController,
+                  autofillHints: const [AutofillHints.givenName],
+                  decoration: InputDecoration(
+                    labelText: 'First name (optional)',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
                 const SizedBox(height: 16),
 

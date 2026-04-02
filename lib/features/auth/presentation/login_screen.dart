@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
+import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
@@ -45,6 +47,9 @@ class _LoginScreenState extends State<LoginScreen> {
     if (mounted) {
       setState(() => _isLoading = false);
       if (result.isSuccess) {
+        // Sync local cart to Woo Store API before any WebView pulls an empty logged-in cart.
+        await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
+        if (!mounted) return;
         context.go(AppRoutes.home);
       } else {
         setState(() => _error = result.errorMessage);
@@ -57,17 +62,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = true;
       _error = null;
     });
-    final result = await AuthService.instance.signIn(
-      email: 'guest@qtoys.com.au',
-      password: 'password123',
-    );
+    // Offline-first: no JWT / network — same idea as a PWA shell using cached assets.
+    await AuthService.instance.enterGuestBrowseMode();
     if (!mounted) return;
     setState(() => _isLoading = false);
-    if (result.isSuccess) {
-      context.go(AppRoutes.home);
-    } else {
-      setState(() => _error = result.errorMessage ?? 'Guest login is not available.');
-    }
+    context.go(AppRoutes.home);
   }
 
   @override
@@ -158,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   child: _isLoading 
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('Login'),
+                    : const Text('Sign in'),
                 ),
               ),
               const SizedBox(height: 16),
@@ -166,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
               TextButton(
                 onPressed: _isLoading ? null : _handleSkip,
                 child: Text(
-                  'Skip for now',
+                  'Browse as guest',
                   style: TextStyle(color: cs.outline, fontWeight: FontWeight.w600),
                 ),
               ),

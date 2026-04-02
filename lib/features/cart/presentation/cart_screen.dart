@@ -12,7 +12,8 @@ import '../data/cart_provider.dart';
 import '../domain/cart_item.dart';
 import '../../../providers.dart';
 import '../../../config/store_config.dart';
-import '../../catalog/presentation/store_webview_screen.dart';
+import '../../../services/auth_service.dart';
+import '../../../config/store_link_service.dart';
 
 /// Cached per cart state — avoids creating a new Future on every build (main-thread churn).
 final cartSummaryProductsProvider = FutureProvider<List<Product>>((ref) async {
@@ -28,6 +29,23 @@ final cartSummaryProductsProvider = FutureProvider<List<Product>>((ref) async {
 
 class CartScreen extends ConsumerWidget {
   const CartScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hydrated = ref.watch(cartHydratedProvider);
+    return hydrated.when(
+      loading: () => Scaffold(
+        appBar: AppBar(title: const Text('Cart'), elevation: 0),
+        body: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => const _CartScreenBody(),
+      data: (_) => const _CartScreenBody(),
+    );
+  }
+}
+
+class _CartScreenBody extends ConsumerWidget {
+  const _CartScreenBody();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -298,21 +316,32 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
 
       if (success) {
         ref.invalidate(storeCartTotalsProvider);
-        // Open the WooCommerce checkout page
-        StoreWebViewScreen.push(context, storeCheckoutUrl);
+        await StoreLinkService.openCart();
       } else {
-        // Fallback: open store cart page so user can add items manually
-        StoreWebViewScreen.push(context, storeCartUrl);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not sync cart. Opening store cart page instead.'),
-            behavior: SnackBarBehavior.floating,
-          ),
+        // If the server cart sync failed, force-create cart lines in the
+        // store via add-to-cart first (common when store session/nonce differs).
+        await StoreLinkService.openAddCartToStore(
+          widget.cart
+              .map((e) => (productId: e.productId, quantity: e.quantity))
+              .toList(),
         );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'Could not sync cart. Opened the store cart in your browser — try again or add items there.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     } catch (_) {
       if (context.mounted) {
-        StoreWebViewScreen.push(context, storeCartUrl);
+        await StoreLinkService.openAddCartToStore(
+          widget.cart
+              .map((e) => (productId: e.productId, quantity: e.quantity))
+              .toList(),
+        );
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);
@@ -333,6 +362,11 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
         });
         final currency =
             products.isNotEmpty ? products.first.currency : 'AUD';
+        final session = AuthService.instance.currentSession;
+        final role = session?.role.toLowerCase() ?? '';
+        final isWholesale = role == 'wholesale';
+        final wholesaleBlocked = isWholesale &&
+            cartTotal < kWholesaleMinimumFirstOrderAud;
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -358,7 +392,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Subtotal (catalog):',
+                            'Subtotal',
                             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
@@ -368,29 +402,18 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                               children: [
                                 Text(
                                   totals?.shippingLine ??
-                                      'Shipping: calculated at checkout (Store API)',
+                                      'Enter address at checkout for shipping',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: theme.colorScheme.onSurface
                                         .withValues(alpha: 0.65),
                                   ),
                                 ),
-                                if (totals?.orderTotalLine != null) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    totals!.orderTotalLine!,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: theme.colorScheme.primary,
-                                    ),
-                                  ),
-                                ],
                               ],
                             ),
                             loading: () => const SizedBox.shrink(),
                             error: (_, __) => Text(
-                              'Shipping: calculated at checkout',
+                              'Enter address at checkout for shipping',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: theme.colorScheme.onSurface
@@ -411,11 +434,42 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                     ),
                   ],
                 ),
+                if (wholesaleBlocked) ...[
+                  const SizedBox(height: 12),
+                  Material(
+                    color: theme.colorScheme.errorContainer.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline,
+                              size: 20, color: theme.colorScheme.error),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Wholesale accounts need a minimum '
+                              '${kWholesaleMinimumFirstOrderAud.toStringAsFixed(0)} $currency '
+                              'subtotal on your first order before checkout. '
+                              'Add more to your cart or contact us if you need help.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: _isSyncing ? null : () => _handleCheckout(context),
+                    onPressed: (_isSyncing || wholesaleBlocked)
+                        ? null
+                        : () => _handleCheckout(context),
                     icon: _isSyncing
                         ? const SizedBox(
                             width: 18,

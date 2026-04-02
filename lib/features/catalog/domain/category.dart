@@ -99,5 +99,19 @@ List<Category> buildCategoryTree(List<Category> flat) {
     }
   }
   roots.sort(_compareCategoryOrder);
+  sortRootsByAgeGroupLast(roots);
   return roots;
+}
+
+/// Puts the "By Age Group" root category last (main nav order).
+void sortRootsByAgeGroupLast(List<Category> roots) {
+  final idx = roots.indexWhere(
+    (c) =>
+        c.slug == 'by-age-group' ||
+        c.name.toLowerCase().contains('by age group'),
+  );
+  if (idx != -1 && idx < roots.length - 1) {
+    final item = roots.removeAt(idx);
+    roots.add(item);
+  }
 }
