@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -20,16 +20,19 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
     super.key,
     required this.initialUrl,
     this.attemptWebLogin = false,
+    this.addToCartItems,
   });
 
   final String initialUrl;
   final bool attemptWebLogin;
+  final List<({int productId, int quantity})>? addToCartItems;
 
   /// Opens the store URL: in-app WebView on mobile/desktop, new tab on web.
   static void push(
     BuildContext context,
     String url, {
     bool attemptWebLogin = false,
+    List<({int productId, int quantity})>? addToCartItems,
   }) {
     if (kIsWeb) {
       launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
@@ -40,6 +43,9 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
         'url': url,
         if (attemptWebLogin) 'autologin': '1',
       }).toString(),
+      extra: addToCartItems
+          ?.map((e) => {'productId': e.productId, 'quantity': e.quantity})
+          .toList(),
     );
   }
 
@@ -54,17 +60,136 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   bool _autoLoginSubmitted = false;
   bool _authBootstrapDone = false;
 
+  late final List<({int productId, int quantity})> _addQueue;
+  bool _addFlowStarted = false;
+  bool _adding = false;
+  int _addIndex = 0;
+  final Map<int, int> _addRetryCountsByProductId = {};
+
   @override
   void initState() {
     super.initState();
     if (kIsWeb) return;
+
+    _addQueue = widget.addToCartItems ?? const [];
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreWebView] init addQueueLen=${_addQueue.length} initialUrl=${widget.initialUrl}',
+      );
+    }
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {},
-          onPageFinished: (_) async {
+          onPageFinished: (String url) async {
+            // If we are mid-add-to-cart sequence, just continue it.
+            if (_adding) {
+              if (kDebugMode) {
+                debugPrint(
+                  '[StoreWebView] add step finished; currentIndex=$_addIndex url=$url',
+                );
+              }
+              _addIndex++;
+              if (_addIndex < _addQueue.length) {
+                final justAdded = _addQueue[_addIndex - 1];
+
+                // Make sure WooCommerce has actually added the just-finished
+                // line item before we navigate to the next add_to_cart URL.
+                final hasItem = await _webViewCartHasItemFromCookies(
+                  productId: justAdded.productId,
+                  expectedQuantity: justAdded.quantity,
+                );
+                if (!hasItem) {
+                  final prev = _addRetryCountsByProductId[justAdded.productId] ?? 0;
+                  const maxRetries = 2;
+                  if (prev < maxRetries) {
+                    _addRetryCountsByProductId[justAdded.productId] = prev + 1;
+                    if (kDebugMode) {
+                      debugPrint(
+                        '[StoreWebView] cart not updated for productId=${justAdded.productId}; retrying add_to_cart (retry=${prev + 1}/$maxRetries)',
+                      );
+                    }
+                    // Roll back index so on the next pageFinished we increment
+                    // back into the "next item" branch.
+                    _addIndex--;
+                    await _controller.loadRequest(
+                      Uri.parse(
+                        storeAddToCartUrl(
+                          justAdded.productId,
+                          quantity: justAdded.quantity,
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[StoreWebView] cart verification failed for productId=${justAdded.productId}; giving up after $maxRetries retries',
+                    );
+                  }
+                }
+                final next = _addQueue[_addIndex];
+                await _controller.loadRequest(
+                  Uri.parse(
+                    storeAddToCartUrl(
+                      next.productId,
+                      quantity: next.quantity,
+                    ),
+                  ),
+                );
+                if (kDebugMode) {
+                  debugPrint(
+                    '[StoreWebView] adding next productId=${next.productId} qty=${next.quantity}',
+                  );
+                }
+              } else {
+                _adding = false;
+                if (kDebugMode) {
+                  debugPrint('[StoreWebView] add queue done; loading final initialUrl');
+                }
+                // Final guard: if cart is still empty/missing the last item,
+                // retry that last add URL a couple times before navigating
+                // to checkout/cart.
+                final lastAdded = _addQueue.lastOrNull;
+                if (lastAdded != null) {
+                  final hasLastItem = await _webViewCartHasItemFromCookies(
+                    productId: lastAdded.productId,
+                    expectedQuantity: lastAdded.quantity,
+                  );
+                  if (!hasLastItem) {
+                    final prev = _addRetryCountsByProductId[lastAdded.productId] ?? 0;
+                    const maxRetries = 2;
+                    if (prev < maxRetries) {
+                      _addRetryCountsByProductId[lastAdded.productId] = prev + 1;
+                      if (kDebugMode) {
+                        debugPrint(
+                          '[StoreWebView] cart not updated for last productId=${lastAdded.productId}; retrying before checkout (retry=${prev + 1}/$maxRetries)',
+                        );
+                      }
+                      _adding = true;
+                      _addIndex--;
+                      await _controller.loadRequest(
+                        Uri.parse(
+                          storeAddToCartUrl(
+                            lastAdded.productId,
+                            quantity: lastAdded.quantity,
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                  }
+                }
+                // Debug: confirm what WooCommerce thinks the cart contains
+                // (using WebView cookies only) before loading checkout.
+                await _debugPrintCartItemsCountFromWebViewCookies();
+                await _controller.loadRequest(Uri.parse(widget.initialUrl));
+              }
+              return;
+            }
+
             if (!widget.attemptWebLogin) return;
             if (!_authBootstrapDone) {
               await _bootstrapWebSession();
@@ -72,6 +197,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
             }
             if (!_autoLoginSubmitted) {
               await _submitWordPressLoginIfNeeded();
+              return;
+            }
+            if (!_addFlowStarted && _addQueue.isNotEmpty) {
+              await _startAddToCartQueue();
             }
           },
           onWebResourceError: (e) {
@@ -86,47 +215,101 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   /// Inject the StoreCartApiService session cookie into the WebView so the
   /// WooCommerce cart is shared between mobile and browser contexts.
-  Future<void> _injectCookiesAndLoad() async {
+  Future<void> _injectStoreCartCookies() async {
     final rawCookie = StoreCartApiService.instance.cookie;
-    if (rawCookie != null && rawCookie.isNotEmpty) {
-      // Parse "name1=val1; name2=val2" into individual cookies
-      final parts = rawCookie.split(';').map((s) => s.trim()).where((s) => s.isNotEmpty);
-      final storeUri = Uri.parse(kStoreBaseUrl);
-      final domain = storeUri.host;
+    final cartToken = StoreCartApiService.instance.cartToken;
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreWebView] injectStoreCartCookies rawCookiePresent=${rawCookie != null && rawCookie.isNotEmpty} cartTokenPresent=${cartToken != null && cartToken.isNotEmpty}',
+      );
+    }
+    if (rawCookie == null || rawCookie.isEmpty) return;
 
-      for (final part in parts) {
-        final eqIndex = part.indexOf('=');
-        if (eqIndex <= 0) continue;
-        final name = part.substring(0, eqIndex).trim();
-        final value = part.substring(eqIndex + 1).trim();
-        try {
-          await _cookieManager.setCookie(
-            WebViewCookie(
-              name: name,
-              value: value,
-              domain: domain,
-              path: '/',
-            ),
-          );
-        } catch (e) {
-          debugPrint('Cookie inject error: $e');
-        }
+    // Parse "name1=val1; name2=val2" into individual cookies
+    final parts =
+        rawCookie.split(';').map((s) => s.trim()).where((s) => s.isNotEmpty);
+    final storeUri = Uri.parse(kStoreBaseUrl);
+    final domain = storeUri.host;
+
+    for (final part in parts) {
+      final eqIndex = part.indexOf('=');
+      if (eqIndex <= 0) continue;
+      final name = part.substring(0, eqIndex).trim();
+      final value = part.substring(eqIndex + 1).trim();
+      try {
+        await _cookieManager.setCookie(
+          WebViewCookie(
+            name: name,
+            value: value,
+            domain: domain,
+            path: '/',
+          ),
+        );
+      } catch (e) {
+        debugPrint('Cookie inject error: $e');
       }
     }
+  }
 
+  /// Inject the StoreCartApiService session cookie into the WebView so the
+  /// WooCommerce cart is shared between mobile and browser contexts.
+  Future<void> _injectCookiesAndLoad() async {
     if (widget.attemptWebLogin) {
-      // Load same-origin first, then establish session via custom JWT->cookie bridge.
-      _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+      // Share the app's WooCommerce session with the WebView so cart/checkout
+      // sees the same lines as the Store API client (unless wholesale: local-only cart).
+      if (!AuthService.instance.isWholesaleCartLocalOnly) {
+        await _injectStoreCartCookies();
+      }
+      // JWT bridge runs on first pageFinished. Loading the storefront home first
+      // then navigating to [initialUrl] caused unwanted redirects for my-account
+      // and lost-password. With no add-to-cart queue, load the target URL directly.
+      if (_addQueue.isNotEmpty) {
+        _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+      } else {
+        _controller.loadRequest(Uri.parse(widget.initialUrl));
+      }
       return;
     }
-    _controller.loadRequest(Uri.parse(widget.initialUrl));
+    await _injectStoreCartCookies();
+    if (_addQueue.isNotEmpty) {
+      await _startAddToCartQueue();
+      return;
+    }
+    await _controller.loadRequest(Uri.parse(widget.initialUrl));
+  }
+
+  Future<void> _startAddToCartQueue() async {
+    if (_addFlowStarted) return;
+    _addFlowStarted = true;
+    _addIndex = 0;
+    _adding = true;
+
+    final first = _addQueue[_addIndex];
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreWebView] starting addQueue: productId=${first.productId} qty=${first.quantity}',
+      );
+    }
+    await _controller.loadRequest(
+      Uri.parse(
+        storeAddToCartUrl(first.productId, quantity: first.quantity),
+      ),
+    );
   }
 
   Future<void> _bootstrapWebSession() async {
     _authBootstrapDone = true;
     final bridged = await _tryJwtCookieBridge();
     if (bridged) {
-      await _controller.loadRequest(Uri.parse(widget.initialUrl));
+      // Some backends Set-Cookie via JS fetch; give the browser a moment to
+      // attach those cookies to subsequent requests.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // JWT bridge sets WooCommerce cookies inside the WebView.
+      if (_addQueue.isNotEmpty) {
+        await _startAddToCartQueue();
+      } else {
+        await _controller.loadRequest(Uri.parse(widget.initialUrl));
+      }
       return;
     }
     // Fallback: WooCommerce my-account login (not wp-login.php).
@@ -134,18 +317,23 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       final loginUrl = storeMyAccountLoginUrl(
         accountType: AuthService.instance.webAccountTypeForStoreLogin,
       );
+      final redirectTo = _addQueue.isNotEmpty ? storeCartUrl : widget.initialUrl;
       await _controller.loadRequest(
         Uri.parse(loginUrl).replace(
           queryParameters: {
             ...Uri.parse(loginUrl).queryParameters,
-            'redirect_to': widget.initialUrl,
+            'redirect_to': redirectTo,
           },
         ),
       );
       _autoLoginSubmitted = false;
       return;
     }
-    await _controller.loadRequest(Uri.parse(widget.initialUrl));
+    if (_addQueue.isNotEmpty) {
+      await _startAddToCartQueue();
+    } else {
+      await _controller.loadRequest(Uri.parse(widget.initialUrl));
+    }
   }
 
   Future<bool> _tryJwtCookieBridge() async {
@@ -187,7 +375,6 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     final email = AuthService.instance.webLoginEmail;
     final password = AuthService.instance.webLoginPassword;
     if (email == null || password == null) return;
-    _autoLoginSubmitted = true;
     final js = '''
 (function() {
   var f = document.querySelector('form.woocommerce-form-login');
@@ -202,7 +389,15 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 })();
 ''';
     try {
-      await _controller.runJavaScriptReturningResult(js);
+      final result = await _controller.runJavaScriptReturningResult(js);
+      var text = result.toString().trim();
+      if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+        text = text.substring(1, text.length - 1);
+      }
+      if (text != 'submitted') {
+        return;
+      }
+      _autoLoginSubmitted = true;
     } catch (e) {
       debugPrint('WebView auto-login submit error: $e');
     }
@@ -227,10 +422,96 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     }
   }
 
+  /// Debug-only helper: fetch cart JSON via WooCommerce Store API using
+  /// WebView cookies (no Store API Cart-Token header).
+  Future<void> _debugPrintCartItemsCountFromWebViewCookies() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  return fetch('/wp-json/wc/store/v1/cart', {
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  }).then(function(r) { return r.text(); });
+})()
+''');
+
+      String text = result.toString().trim();
+      if (text.startsWith('"') && text.endsWith('"')) {
+        // runJavaScriptReturningResult returns a JSON-encoded string.
+        text = text.substring(1, text.length - 1);
+        text = text.replaceAll(r'\"', '"');
+      }
+      if (text.isEmpty || text == 'null') return;
+
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) {
+        final items = decoded['items'];
+        final count = items is List ? items.length : null;
+        debugPrint('[StoreWebView] cart (cookies-only) itemsCount=$count');
+      }
+    } catch (e) {
+      debugPrint('WebView cart debug fetch error: $e');
+    }
+  }
+
+  Future<bool> _webViewCartHasItemFromCookies({
+    required int productId,
+    required int expectedQuantity,
+  }) async {
+    try {
+      // Give WooCommerce a moment to process the `?add_to_cart=...` request.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  return fetch('/wp-json/wc/store/v1/cart', {
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  }).then(function(r) { return r.text(); });
+})()
+''');
+
+      String text = result.toString().trim();
+      if (text.startsWith('"') && text.endsWith('"')) {
+        text = text.substring(1, text.length - 1);
+        text = text.replaceAll(r'\"', '"');
+      }
+      if (text.isEmpty || text == 'null') return false;
+
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) return false;
+      final items = decoded['items'];
+      if (items is! List) return false;
+
+      for (final e in items) {
+        if (e is! Map<String, dynamic>) continue;
+        final id = e['id'];
+        final pid = id is int ? id : int.tryParse(id?.toString() ?? '');
+        if (pid != productId) continue;
+
+        final qRaw = e['quantity'];
+        final q = qRaw is int ? qRaw : int.tryParse(qRaw?.toString() ?? '');
+        if (q != null && q >= expectedQuantity) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Same-origin fetch includes HttpOnly session cookies — updates app cart even when
   /// `document.cookie` cannot see the WooCommerce session cookie.
-  Future<void> _pullCartJsonFromWebView() async {
+  ///
+  /// **Do not** send the app's `Cart-Token` header here: it can point at a different
+  /// session than the browser cookie jar and return the wrong cart.
+  Future<bool> _pullCartJsonFromWebView() async {
+    final wholesaleLocal = AuthService.instance.isWholesaleCartLocalOnly;
     try {
+      if (kDebugMode) {
+        debugPrint(
+          '[StoreWebView] pullCart: browser session only (no Cart-Token header)',
+        );
+      }
       final result = await _controller.runJavaScriptReturningResult('''
 (function() {
   return fetch('/wp-json/wc/store/v1/cart', {
@@ -247,21 +528,36 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
           text = text.substring(1, text.length - 1).replaceAll(r'\"', '"');
         }
       }
-      if (text.isEmpty || text == 'null') return;
+      if (text.isEmpty || text == 'null') return false;
       final decoded = jsonDecode(text);
-      if (decoded is Map<String, dynamic>) {
-        await ref.read(cartProvider.notifier).applyStoreCartFromJson(decoded);
+      if (decoded is! Map<String, dynamic>) return false;
+      if (decoded['items'] is! List) return false;
+      if (!wholesaleLocal) {
+        await StoreCartApiService.instance.absorbCartSessionFromCartJson(decoded);
       }
+      await ref.read(cartProvider.notifier).applyStoreCartFromJson(decoded);
+      return true;
     } catch (e) {
       debugPrint('WebView cart JSON pull error: $e');
+      return false;
     }
   }
 
   /// Sync cart + cookies after checkout/cart changes in the WebView.
   Future<void> _syncAfterWebView() async {
-    await _pullCartJsonFromWebView();
+    final wholesaleLocal = AuthService.instance.isWholesaleCartLocalOnly;
+    if (wholesaleLocal) {
+      await _pullCartJsonFromWebView();
+      await _syncCookiesBack();
+      ref.invalidate(storeCartFullProvider);
+      return;
+    }
+    final pulledOk = await _pullCartJsonFromWebView();
     await _syncCookiesBack();
-    await ref.read(cartProvider.notifier).refreshFromRemote();
+    if (!pulledOk) {
+      await ref.read(cartProvider.notifier).refreshFromRemote();
+    }
+    ref.invalidate(storeCartFullProvider);
   }
 
   /// Close handler: pull cart JSON (HttpOnly-safe), cookies, then server refresh.

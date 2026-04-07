@@ -19,6 +19,10 @@ class StoreLinkService {
   /// Open store checkout page (user must have added items on store or we open cart).
   static Future<bool> openCheckout() async => _launch(storeCheckoutUrl);
 
+  /// Opens the product page in the store website (permalink via WordPress redirect).
+  static Future<bool> openProduct(int productId) =>
+      _launch(storeProductUrl(productId));
+
   /// Open URL that adds the first cart item to the store, then user can add more or go to checkout on the site.
   static Future<bool> openAddCartToStore(
       List<({int productId, int quantity})> items) async {
@@ -47,8 +51,21 @@ class StoreLinkService {
     return buildJwtCookieBridgeLaunchUrl(jwt: jwt, redirectUrl: targetUrl);
   }
 
+  static String _normalizeToAbsoluteStoreUrl(String targetUrl) {
+    try {
+      final u = Uri.parse(targetUrl);
+      if (u.isAbsolute) return targetUrl;
+      // If it's a store path like `/product/...`, prefix the base URL.
+      if (targetUrl.startsWith('/')) return '$kStoreBaseUrl$targetUrl';
+      return targetUrl;
+    } catch (_) {
+      return targetUrl;
+    }
+  }
+
   static Future<bool> _launch(String targetUrl) async {
-    final resolved = _urlWithSessionIfNeeded(targetUrl);
+    final normalized = _normalizeToAbsoluteStoreUrl(targetUrl);
+    final resolved = _urlWithSessionIfNeeded(normalized);
     final uri = Uri.parse(resolved);
     try {
       if (kIsWeb) {

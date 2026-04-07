@@ -35,6 +35,7 @@ class ProductRepository {
             currency: remoteProduct.currency,
             image: remoteProduct.image,
             images: localProduct.images,
+            permalink: remoteProduct.permalink,
             inStock: remoteProduct.inStock,
             stockAmount: remoteProduct.stockAmount,
             category: remoteProduct.category,

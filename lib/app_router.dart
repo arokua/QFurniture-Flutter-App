@@ -6,6 +6,7 @@ import 'features/catalog/presentation/product_detail_screen.dart';
 import 'features/catalog/presentation/store_webview_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/registration_screen.dart';
+import 'features/orders/presentation/order_history_screen.dart';
 import 'screens/main_tab_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/auth_service.dart';
@@ -21,6 +22,7 @@ abstract class AppRoutes {
   static const String homeMore = '/home/more';
   static const String cart = '/cart';
   static const String favorites = '/favorites';
+  static const String orders = '/orders';
   static const String store = '/store';
   static String product(int id) => '/p/$id';
 }
@@ -80,6 +82,11 @@ final router = GoRouter(
       builder: (_, __) => const FavoritesScreen(),
     ),
     GoRoute(
+      path: AppRoutes.orders,
+      name: 'orders',
+      builder: (_, __) => const OrderHistoryScreen(),
+    ),
+    GoRoute(
       path: '/p/:id',
       builder: (ctx, st) {
         final id = int.parse(st.pathParameters['id']!);
@@ -91,9 +98,23 @@ final router = GoRouter(
       builder: (ctx, st) {
         final url = st.uri.queryParameters['url'] ?? storeCartUrl;
         final autoLogin = st.uri.queryParameters['autologin'] == '1';
+        final extra = st.extra;
+        List<({int productId, int quantity})>? addToCartItems;
+        if (extra is List) {
+          addToCartItems = extra
+              .map((e) => e is Map
+                  ? (
+                      productId: (e['productId'] as num).toInt(),
+                      quantity: (e['quantity'] as num).toInt(),
+                    )
+                  : null)
+              .whereType<({int productId, int quantity})>()
+              .toList();
+        }
         return StoreWebViewScreen(
           initialUrl: url,
           attemptWebLogin: autoLogin,
+          addToCartItems: addToCartItems,
         );
       },
     ),

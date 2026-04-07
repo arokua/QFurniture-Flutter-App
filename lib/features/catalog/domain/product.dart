@@ -1,4 +1,5 @@
 import '../utils/html_utils.dart';
+import 'role_pricing.dart';
 
 class Variant {
   final String sku;
@@ -10,6 +11,9 @@ class Variant {
       required this.label,
       required this.price,
       required this.inStock});
+
+  double priceForRole(String? role) =>
+      RolePricing.roundMoney(price * RolePricing.multiplierFor(role));
 
   factory Variant.fromJson(Map<String, dynamic> j) {
     // Variations in Store API also use a 'prices' object
@@ -60,6 +64,7 @@ class Product {
   final String currency;
   final String image;
   final List<String> images; // Multiple images for gallery
+  final String? permalink; // Product permalink from WC Store API
   final bool inStock;
   final String? stockAmount; // e.g. "18 in stock"
   final String category;
@@ -86,6 +91,7 @@ class Product {
     required this.currency,
     required this.image,
     required this.images,
+    this.permalink,
     required this.inStock,
     this.stockAmount,
     required this.category,
@@ -262,6 +268,14 @@ class Product {
         : (apiStockAmount != null ? '$apiStockAmount in stock' : null);
     final String? stockNormalized = normalizeStockDisplay(rawStock);
 
+    // WC Store API often includes a `permalink` field; use it so UI opens
+    // the correct product page instead of relying on `?p=ID`.
+    final String? permalinkVal =
+        (j['permalink'] ?? j['link'] ?? j['url'])?.toString();
+    final String? permalink = permalinkVal?.trim().isNotEmpty == true
+        ? decodeHtmlEntities(permalinkVal!)
+        : null;
+
     return Product(
       id: id,
       name: decodeHtmlEntities(j['name'] as String? ?? ''),
@@ -272,6 +286,7 @@ class Product {
       currency: currency,
       image: imageStr,
       images: imagesParsed,
+      permalink: permalink,
       inStock: j['inStock'] ?? apiInStock,
       stockAmount: stockNormalized,
       category: category,
@@ -312,4 +327,23 @@ class Product {
   /// Main image only – used in list/grid. Sub images are in [images] for detail screen.
   String get primaryImage =>
       image.isNotEmpty ? image : (images.isNotEmpty ? images.first : "");
+
+  /// Retailer reference from WooCommerce; scaled by [RolePricing] for the session role.
+  double displayCurrentPriceForRole(String? role) {
+    final m = RolePricing.multiplierFor(role);
+    if (onSale && salePrice != null) {
+      return RolePricing.roundMoney(salePrice! * m);
+    }
+    return RolePricing.roundMoney(price * m);
+  }
+
+  double? displayRegularPriceForRole(String? role) {
+    if (regularPrice == null) return null;
+    return RolePricing.roundMoney(regularPrice! * RolePricing.multiplierFor(role));
+  }
+
+  double? displaySalePriceForRole(String? role) {
+    if (!onSale || salePrice == null) return null;
+    return RolePricing.roundMoney(salePrice! * RolePricing.multiplierFor(role));
+  }
 }

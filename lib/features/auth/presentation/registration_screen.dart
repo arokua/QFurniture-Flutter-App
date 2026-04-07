@@ -24,28 +24,22 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   bool _isLoading = false;
   String? _error;
 
-  /// Role options: slug → display label (dropdown order: B2B first, then retail, then normal).
+  /// Partner roles only (retail consumer registration removed).
   static const _roleLabels = <String, String>{
     'wholesale': 'Wholesale',
-    'dropshipping': 'Dropship',
-    'retailer': 'Retailer',
-    'customers': 'Normal',
+    'dropshipping': 'Dropship / Retail',
   };
 
   static const _roleOrder = <String>[
     'wholesale',
     'dropshipping',
-    'retailer',
-    'customers',
   ];
 
-  String _selectedRole = 'customers';
+  String _selectedRole = 'wholesale';
 
   /// Whether the selected role requires business fields.
   bool get _needsBusinessFields =>
-      _selectedRole == 'wholesale' ||
-      _selectedRole == 'retailer' ||
-      _selectedRole == 'dropshipping';
+      _selectedRole == 'wholesale' || _selectedRole == 'dropshipping';
 
   @override
   void dispose() {
@@ -106,14 +100,14 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'Create Account',
+                  'Partner registration',
                   style: theme.textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Join the QToys family',
+                  'Wholesale or dropship / retail trade accounts',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: cs.onSurface.withValues(alpha: 0.6),
                   ),

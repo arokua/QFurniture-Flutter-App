@@ -40,6 +40,9 @@ class StoreCartApiService {
   /// Expose the current session cookie for WebView injection.
   String? get cookie => _cookie;
 
+  /// Expose the current WooCommerce cart token for headless cart usage.
+  String? get cartToken => _cartToken;
+
   /// Set cookie from external source (e.g. WebView).
   Future<void> setCookie(String cookie) async {
     _cookie = _mergeCookiesPreservingSession(existing: _cookie, incoming: cookie);
@@ -102,6 +105,36 @@ class StoreCartApiService {
   Future<void> _absorbResponse(http.Response response) async {
     await setCookieFromResponse(response);
     _captureNonceFromResponse(response);
+  }
+
+  /// Persist [Cart-Token] from a WooCommerce Store API `GET /cart` JSON body (e.g. WebView).
+  /// Keeps the app's HTTP client on the same cart session as the browser.
+  Future<void> absorbCartSessionFromCartJson(Map<String, dynamic> json) async {
+    final token = _extractCartTokenFromCartJson(json);
+    if (token != null && token.isNotEmpty) {
+      _cartToken = token;
+      await _prefs?.setString('cart_cart_token', token);
+      if (kDebugMode) {
+        debugPrint('[StoreCart] absorbed Cart-Token from cart JSON (len=${token.length})');
+      }
+    }
+  }
+
+  /// WooCommerce may expose the token at root or under `extensions`.
+  String? _extractCartTokenFromCartJson(Map<String, dynamic> json) {
+    final root = json['token'];
+    if (root is String && root.trim().isNotEmpty) return root.trim();
+    final ext = json['extensions'];
+    if (ext is Map<String, dynamic>) {
+      final woo = ext['woocommerce'];
+      if (woo is Map<String, dynamic>) {
+        for (final k in ['cart_token', 'token', 'cartToken']) {
+          final v = woo[k];
+          if (v is String && v.trim().isNotEmpty) return v.trim();
+        }
+      }
+    }
+    return null;
   }
 
   Map<String, String> get _headers {

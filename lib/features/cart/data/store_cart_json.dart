@@ -30,6 +30,7 @@ class StoreCartTotalsView {
     required this.minorUnit,
     required this.totalPriceMinor,
     required this.totalShippingMinor,
+    this.totalItemsMinor,
     required this.hasCalculatedShipping,
   });
 
@@ -38,6 +39,8 @@ class StoreCartTotalsView {
   final int minorUnit;
   final int? totalPriceMinor;
   final int? totalShippingMinor;
+  /// Sum of line items before shipping (WooCommerce `total_items`).
+  final int? totalItemsMinor;
   final bool hasCalculatedShipping;
 
   static StoreCartTotalsView? fromCartJson(Map<String, dynamic> json) {
@@ -49,6 +52,7 @@ class StoreCartTotalsView {
     final sym = totals['currency_symbol']?.toString() ?? r'$';
     final tp = _parseMinor(totals['total_price']);
     final ts = _parseMinor(totals['total_shipping']);
+    final ti = _parseMinor(totals['total_items']);
     final hasShip = json['has_calculated_shipping'] == true;
     return StoreCartTotalsView(
       currencyCode: code,
@@ -56,6 +60,7 @@ class StoreCartTotalsView {
       minorUnit: mu,
       totalPriceMinor: tp,
       totalShippingMinor: ts,
+      totalItemsMinor: ti,
       hasCalculatedShipping: hasShip,
     );
   }
@@ -81,15 +86,19 @@ class StoreCartTotalsView {
     return p;
   }
 
-  String? get shippingLine {
-    if (!hasCalculatedShipping) {
+  String get shippingLine {
+    if (totalShippingMinor == null) {
       return 'Enter address at checkout for shipping';
     }
-    if (totalShippingMinor == null) return null;
-    if (totalShippingMinor == 0) {
-      return 'Shipping: Free';
+    if (totalShippingMinor == 0 && !hasCalculatedShipping) {
+      return 'Shipping calculated at checkout';
     }
-    return 'Shipping: ${formatMinor(totalShippingMinor)}';
+    return 'Shipping: ${formatMinor(totalShippingMinor) ?? ''}';
+  }
+
+  String? get formattedSubtotal {
+    if (totalItemsMinor == null) return null;
+    return formatMinor(totalItemsMinor);
   }
 
   /// Store-reported total (same currency as WooCommerce); optional for future UI.

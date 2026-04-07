@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../config/store_cart_api_service.dart';
@@ -9,11 +10,12 @@ import '../../catalog/utils/asset_path.dart';
 import '../../catalog/utils/html_utils.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
+import '../data/store_cart_snapshot.dart';
 import '../domain/cart_item.dart';
 import '../../../providers.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
-import '../../../config/store_link_service.dart';
+import '../../catalog/presentation/store_webview_screen.dart';
 
 /// Cached per cart state — avoids creating a new Future on every build (main-thread churn).
 final cartSummaryProductsProvider = FutureProvider<List<Product>>((ref) async {
@@ -81,56 +83,98 @@ class _CartScreenBody extends ConsumerWidget {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cart'),
-        elevation: 0,
-        actions: [
-          TextButton(
-            onPressed: () async {
-              ref.read(cartProvider.notifier).clear();
-              await StoreCartApiService.instance.clearCart();
-            },
-            child: const Text('Clear All'),
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final role = AuthService.instance.currentSession?.role;
+        final wholesaleLocal = AuthService.instance.isWholesaleCartLocalOnly;
+        final cartSnap = ref.watch(storeCartFullProvider);
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Cart'),
+            elevation: 0,
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  ref.read(cartProvider.notifier).clear();
+                  if (!wholesaleLocal) {
+                    await StoreCartApiService.instance.clearCart();
+                  }
+                },
+                child: const Text('Clear All'),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: cart.length,
-              itemBuilder: (context, index) {
-                final item = cart[index];
-                return FutureBuilder<Product?>(
-                  future: repo.getById(item.productId),
-                  builder: (context, snap) {
-                    final product = snap.data;
-                    return _CartListItem(
-                      item: item,
-                      product: product,
-                      onRemove: () {
-                        ref.read(cartProvider.notifier).remove(item.productId);
-                        StoreCartApiService.instance
-                            .removeItemByProductId(item.productId);
-                      },
-                      onQuantityChanged: (newQty) {
-                        ref
-                            .read(cartProvider.notifier)
-                            .setQuantity(item.productId, newQty);
-                        StoreCartApiService.instance
-                            .updateItemByProductId(item.productId, newQty);
+          body: Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: cart.length,
+                  itemBuilder: (context, index) {
+                    final item = cart[index];
+                    return FutureBuilder<Product?>(
+                      future: repo.getById(item.productId),
+                      builder: (context, snap) {
+                        if (snap.connectionState != ConnectionState.done) {
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                  SizedBox(width: 12),
+                                  Text('Loading...'),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+
+                        final product = snap.data;
+                        return _CartListItem(
+                          item: item,
+                          product: product,
+                          role: role,
+                          apiProductName:
+                              cartSnap.asData?.value?.byProductId[item.productId]?.name,
+                          onRemove: () {
+                            ref
+                                .read(cartProvider.notifier)
+                                .remove(item.productId);
+                            if (!wholesaleLocal) {
+                              StoreCartApiService.instance
+                                  .removeItemByProductId(item.productId);
+                            }
+                          },
+                          onQuantityChanged: (newQty) {
+                            ref.read(cartProvider.notifier).setQuantity(
+                                  item.productId,
+                                  newQty,
+                                );
+                            if (!wholesaleLocal) {
+                              StoreCartApiService.instance
+                                  .updateItemByProductId(
+                                      item.productId, newQty);
+                            }
+                          },
+                        );
                       },
                     );
                   },
-                );
-              },
-            ),
+                ),
+              ),
+              _CartSummary(cart: cart, repo: repo, cartSnap: cartSnap),
+            ],
           ),
-          _CartSummary(cart: cart, repo: repo),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -139,12 +183,17 @@ class _CartListItem extends StatelessWidget {
   const _CartListItem({
     required this.item,
     required this.product,
+    required this.role,
+    this.apiProductName,
     required this.onRemove,
     required this.onQuantityChanged,
   });
 
   final CartItem item;
   final Product? product;
+  final String? role;
+  /// From WooCommerce Store API cart `items[].name` when synced.
+  final String? apiProductName;
   final VoidCallback onRemove;
   final void Function(int) onQuantityChanged;
 
@@ -221,7 +270,11 @@ class _CartListItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    decodeHtmlEntities(product!.name),
+                    decodeHtmlEntities(
+                      (apiProductName != null && apiProductName!.trim().isNotEmpty)
+                          ? apiProductName!
+                          : product!.name,
+                    ),
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
@@ -231,7 +284,7 @@ class _CartListItem extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${product!.currency} ${product!.price.toStringAsFixed(2)}',
+                    '${product!.currency} ${product!.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
                     style: theme.textTheme.titleSmall?.copyWith(
                       color: theme.colorScheme.primary,
                       fontWeight: FontWeight.bold,
@@ -290,10 +343,12 @@ class _CartSummary extends ConsumerStatefulWidget {
   const _CartSummary({
     required this.cart,
     required this.repo,
+    required this.cartSnap,
   });
 
   final List<CartItem> cart;
   final ProductRepository repo;
+  final AsyncValue<StoreCartApiSnapshot?> cartSnap;
 
   @override
   ConsumerState<_CartSummary> createState() => _CartSummaryState();
@@ -303,6 +358,12 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
   bool _isSyncing = false;
 
   Future<void> _handleCheckout(BuildContext context) async {
+    if (AuthService.instance.isWholesaleCartLocalOnly) {
+      final uri = Uri.parse('mailto:sales@qtoys.com.au');
+      await launchUrl(uri);
+      return;
+    }
+
     setState(() => _isSyncing = true);
 
     try {
@@ -315,30 +376,43 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
       if (!context.mounted) return;
 
       if (success) {
-        ref.invalidate(storeCartTotalsProvider);
-        await StoreLinkService.openCart();
-      } else {
-        // If the server cart sync failed, force-create cart lines in the
-        // store via add-to-cart first (common when store session/nonce differs).
-        await StoreLinkService.openAddCartToStore(
-          widget.cart
+        // Important: refresh via Store API before opening the WebView.
+        // WebView renders cart/checkout using cookie-based sessions; this GET
+        // should capture any Set-Cookie so the rendered session cart matches.
+        ref.invalidate(storeCartFullProvider);
+        await ref.read(cartProvider.notifier).refreshFromRemote();
+        if (!context.mounted) return;
+        StoreWebViewScreen.push(
+          context,
+          storeCheckoutUrl,
+          attemptWebLogin: true,
+          addToCartItems: widget.cart
               .map((e) => (productId: e.productId, quantity: e.quantity))
               .toList(),
         );
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'Could not sync cart. Opened the store cart in your browser — try again or add items there.'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
+      } else {
+        // Still refresh local/remote cart state so the WebView opens with
+        // the correct server cart when rendering.
+        await ref.read(cartProvider.notifier).refreshFromRemote();
+        if (!context.mounted) return;
+        StoreWebViewScreen.push(
+          context,
+          storeCheckoutUrl,
+          attemptWebLogin: true,
+          addToCartItems: widget.cart
+              .map((e) => (productId: e.productId, quantity: e.quantity))
+              .toList(),
+        );
       }
     } catch (_) {
       if (context.mounted) {
-        await StoreLinkService.openAddCartToStore(
-          widget.cart
+        await ref.read(cartProvider.notifier).refreshFromRemote();
+        if (!context.mounted) return;
+        StoreWebViewScreen.push(
+          context,
+          storeCheckoutUrl,
+          attemptWebLogin: true,
+          addToCartItems: widget.cart
               .map((e) => (productId: e.productId, quantity: e.quantity))
               .toList(),
         );
@@ -352,21 +426,27 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final asyncProducts = ref.watch(cartSummaryProductsProvider);
-    final totalsAsync = ref.watch(storeCartTotalsProvider);
 
     return asyncProducts.when(
       data: (products) {
+        final role = AuthService.instance.currentSession?.role;
         final cartTotal = products.fold<double>(0, (total, p) {
           final qty = widget.cart.firstWhere((i) => i.productId == p.id).quantity;
-          return total + (p.price * qty);
+          return total + (p.displayCurrentPriceForRole(role) * qty);
         });
         final currency =
             products.isNotEmpty ? products.first.currency : 'AUD';
         final session = AuthService.instance.currentSession;
-        final role = session?.role.toLowerCase() ?? '';
-        final isWholesale = role == 'wholesale';
-        final wholesaleBlocked = isWholesale &&
-            cartTotal < kWholesaleMinimumFirstOrderAud;
+        final roleLower = session?.role.toLowerCase() ?? '';
+        final isWholesale = roleLower == 'wholesale';
+        final snap = widget.cartSnap.asData?.value;
+        final tv = snap?.totalsView;
+        final useStoreApi =
+            snap != null && tv != null && !isWholesale;
+        final titleLeft = useStoreApi ? 'Total' : 'Subtotal';
+        final amountRight = useStoreApi && tv.formattedTotal != null
+            ? tv.formattedTotal!
+            : '$currency ${cartTotal.toStringAsFixed(2)}';
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -391,28 +471,36 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Subtotal',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          Text(
+                            titleLeft,
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
-                          totalsAsync.when(
-                            data: (totals) => Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  totals?.shippingLine ??
-                                      'Enter address at checkout for shipping',
+                          if (useStoreApi) ...[
+                            if (tv.formattedSubtotal != null &&
+                                tv.formattedTotal != null &&
+                                tv.formattedSubtotal != tv.formattedTotal)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  'Subtotal ${tv.formattedSubtotal}',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: theme.colorScheme.onSurface
                                         .withValues(alpha: 0.65),
                                   ),
                                 ),
-                              ],
+                              ),
+                            Text(
+                              tv.shippingLine,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.65),
+                              ),
                             ),
-                            loading: () => const SizedBox.shrink(),
-                            error: (_, __) => Text(
+                          ] else
+                            Text(
                               'Enter address at checkout for shipping',
                               style: TextStyle(
                                 fontSize: 12,
@@ -420,12 +508,11 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                                     .withValues(alpha: 0.65),
                               ),
                             ),
-                          ),
                         ],
                       ),
                     ),
                     Text(
-                      '$currency ${cartTotal.toStringAsFixed(2)}',
+                      amountRight,
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -434,25 +521,23 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                     ),
                   ],
                 ),
-                if (wholesaleBlocked) ...[
+                if (isWholesale) ...[
                   const SizedBox(height: 12),
                   Material(
-                    color: theme.colorScheme.errorContainer.withValues(alpha: 0.35),
+                    color: theme.colorScheme.primaryContainer.withValues(alpha: 0.45),
                     borderRadius: BorderRadius.circular(10),
                     child: Padding(
                       padding: const EdgeInsets.all(12),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.info_outline,
-                              size: 20, color: theme.colorScheme.error),
+                          Icon(Icons.local_shipping_outlined,
+                              size: 20, color: theme.colorScheme.primary),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Wholesale accounts need a minimum '
-                              '${kWholesaleMinimumFirstOrderAud.toStringAsFixed(0)} $currency '
-                              'subtotal on your first order before checkout. '
-                              'Add more to your cart or contact us if you need help.',
+                              'Wholesale cart stays in this app only (not synced to the store). '
+                              'For shipping costs and to place orders, contact sales@qtoys.com.au.',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 height: 1.35,
                               ),
@@ -464,10 +549,20 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                   ),
                 ],
                 const SizedBox(height: 12),
+                if (!isWholesale)
+                  Text(
+                    'Checkout happens on the store website. '
+                    'If you don’t see the items, tap “Add to cart” again on the store page, then complete checkout.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                      height: 1.35,
+                    ),
+                  ),
+                if (!isWholesale) const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: (_isSyncing || wholesaleBlocked)
+                    onPressed: _isSyncing
                         ? null
                         : () => _handleCheckout(context),
                     icon: _isSyncing
@@ -479,8 +574,12 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.shopping_cart_checkout),
-                    label: Text(_isSyncing ? 'Syncing cart...' : 'Proceed to checkout'),
+                        : Icon(isWholesale ? Icons.email_outlined : Icons.shopping_cart_checkout),
+                    label: Text(_isSyncing
+                        ? 'Syncing cart...'
+                        : (isWholesale
+                            ? 'Email sales@qtoys.com.au'
+                            : 'Checkout on store website')),
                   ),
                 ),
               ],

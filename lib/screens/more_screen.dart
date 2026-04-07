@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../config/store_config.dart';
-import '../config/store_link_service.dart';
+import '../features/catalog/presentation/store_webview_screen.dart';
 import '../services/auth_service.dart';
 
 String _accountRoleLabel(String role) {
@@ -13,7 +13,7 @@ String _accountRoleLabel(String role) {
     case 'wholesale':
       return 'WHOLESALE';
     case 'dropshipping':
-      return 'DROPSHIP';
+      return 'DROPSHIP / RETAIL';
     case 'retailer':
       return 'RETAILER';
     default:
@@ -55,11 +55,11 @@ class MoreScreen extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.cloud_off_outlined, color: cs.primary),
+                          Icon(Icons.storefront_outlined, color: cs.primary),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Browsing without an account',
+                              'Browsing the catalogue',
                               style: theme.textTheme.titleMedium
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
@@ -68,29 +68,15 @@ class MoreScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Catalogue uses cached data when offline. Sign in to sync cart, checkout, and account.',
+                        'Prices shown are retail reference. Partners can sign in for trade pricing and account tools.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: cs.onSurface.withValues(alpha: 0.7),
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          FilledButton.tonal(
-                            onPressed: () => context.go(AppRoutes.login),
-                            child: const Text('Sign in'),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () async {
-                              await AuthService.instance.signOut();
-                              if (context.mounted) {
-                                context.go(AppRoutes.login);
-                              }
-                            },
-                            child: const Text('End session'),
-                          ),
-                        ],
+                      FilledButton.tonal(
+                        onPressed: () => context.go(AppRoutes.login),
+                        child: const Text('Partner sign in'),
                       ),
                     ],
                   ),
@@ -149,7 +135,7 @@ class MoreScreen extends StatelessWidget {
                         onPressed: () async {
                           await AuthService.instance.signOut();
                           if (context.mounted) {
-                            context.go(AppRoutes.login);
+                            context.go(AppRoutes.home);
                           }
                         },
                       ),
@@ -171,35 +157,50 @@ class MoreScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push(AppRoutes.favorites),
           ),
+          if (session != null)
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Order history'),
+              subtitle: const Text('Orders from your store account'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(AppRoutes.orders),
+            ),
           ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('My account'),
             subtitle: const Text('Store account on qtoys.com.au'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
+            onTap: () {
               final session = AuthService.instance.currentSession;
-              if (session == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Sign in to open your store account.'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-                context.go(AppRoutes.login);
-                return;
-              }
-              // Opens in the device browser (same cart/session UX as checkout).
-              final url = storeMyAccountLoginUrl(
-                accountType: AuthService.instance.webAccountTypeForStoreLogin,
+              final url = session != null
+                  ? storeMyAccountUrl
+                  : storeMyAccountLoginUrl(
+                      accountType:
+                          AuthService.instance.webAccountTypeForStoreLogin,
+                    );
+              StoreWebViewScreen.push(
+                context,
+                url,
+                attemptWebLogin: session != null,
               );
-              await StoreLinkService.openUrl(url);
             },
           ),
           ListTile(
             leading: const Icon(Icons.lock_reset_outlined),
             title: const Text('Reset password'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => StoreLinkService.openPasswordReset(),
+            onTap: () => StoreWebViewScreen.push(
+              context,
+              storeLostPasswordUrl,
+              attemptWebLogin: false,
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.app_registration_outlined),
+            title: const Text('Partner registration'),
+            subtitle: const Text('Wholesale or dropship / retail'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(AppRoutes.register),
           ),
         ],
       ),

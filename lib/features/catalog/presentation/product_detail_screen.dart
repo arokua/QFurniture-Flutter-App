@@ -5,7 +5,9 @@ import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_link_service.dart';
+import '../../../config/store_config.dart';
+import '../../../services/auth_service.dart';
+import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
 import '../domain/product.dart';
 import '../../../utils/user_facing_errors.dart';
@@ -143,7 +145,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   Widget _buildDetailMainContent(BuildContext context, dynamic p) {
     final theme = Theme.of(context);
-    return Column(
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final role = AuthService.instance.currentSession?.role;
+        return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Title (decoded so &amp; etc. display correctly)
@@ -158,7 +164,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(child: _buildDetailPrice(theme, p)),
+            Expanded(child: _buildDetailPrice(theme, p, role)),
           ],
         ),
         const SizedBox(height: 16),
@@ -250,7 +256,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${p.currency} ${v.price.toStringAsFixed(2)}',
+                        '${p.currency} ${v.priceForRole(role).toStringAsFixed(2)}',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: v.inStock
@@ -285,24 +291,27 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         ref
                             .read(cartProvider.notifier)
                             .add(p.id, quantity: 1);
-                        var remoteOk = await StoreCartApiService.instance
-                            .addItem(p.id, quantity: 1);
-                        if (!remoteOk) {
-                          final cart = ref.read(cartProvider);
+                        var remoteOk = true;
+                        if (!AuthService.instance.isWholesaleCartLocalOnly) {
                           remoteOk = await StoreCartApiService.instance
-                              .syncCartToOnline(
-                            cart
-                                .map((e) => (
-                                      productId: e.productId,
-                                      quantity: e.quantity,
-                                    ))
-                                .toList(),
-                          );
-                        }
-                        if (remoteOk) {
-                          await ref
-                              .read(cartProvider.notifier)
-                              .refreshFromRemote();
+                              .addItem(p.id, quantity: 1);
+                          if (!remoteOk) {
+                            final cart = ref.read(cartProvider);
+                            remoteOk = await StoreCartApiService.instance
+                                .syncCartToOnline(
+                              cart
+                                  .map((e) => (
+                                        productId: e.productId,
+                                        quantity: e.quantity,
+                                      ))
+                                  .toList(),
+                            );
+                          }
+                          if (remoteOk) {
+                            await ref
+                                .read(cartProvider.notifier)
+                                .refreshFromRemote();
+                          }
                         }
                         if (!context.mounted) return;
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -310,7 +319,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                             content: Text(
                               remoteOk
                                   ? 'Added ${decodeHtmlEntities(p.name)} to cart'
-                                  : 'Saved in app. Store sync failed — use “Open on store website”.',
+                                  : 'Saved in your app cart, but we could not sync it to the store session. For checkout, use the "Open on store website (for checkout)" button on this screen, tap "Add to cart" on the store page, and complete checkout there (shipping is filled on the store).',
                             ),
                             behavior: SnackBarBehavior.floating,
                           ),
@@ -329,7 +338,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             if (p.inStock) ...[
               const SizedBox(height: 8),
               TextButton.icon(
-                onPressed: () => StoreLinkService.openAddToCart(p.id, quantity: 1),
+                onPressed: () {
+                  final url = p.permalink;
+                  final raw = url?.trim();
+                  final absoluteUrl = (raw != null && raw.isNotEmpty)
+                      ? (raw.startsWith('/') ? '${kStoreBaseUrl}$raw' : raw)
+                      : storeProductUrl(p.id);
+                  StoreWebViewScreen.push(
+                    context,
+                    absoluteUrl,
+                    attemptWebLogin: true,
+                  );
+                },
                 icon: const Icon(Icons.open_in_browser, size: 20),
                 label: const Text('Open on store website'),
               ),
@@ -339,6 +359,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         const SizedBox(height: 24),
         _buildProductBenefits(context),
       ],
+    );
+      },
     );
   }
 
@@ -385,17 +407,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  Widget _buildDetailPrice(ThemeData theme, dynamic p) {
+  Widget _buildDetailPrice(ThemeData theme, Product p, String? role) {
+    final sale = p.displaySalePriceForRole(role);
+    final reg = p.displayRegularPriceForRole(role);
     if (p.onSale &&
-        p.regularPrice != null &&
-        p.salePrice != null &&
-        p.regularPrice! > 0) {
+        sale != null &&
+        reg != null &&
+        reg > 0) {
       final pct =
-          ((p.regularPrice! - p.salePrice!) / p.regularPrice! * 100).round();
+          ((reg - sale) / reg * 100).round();
       return Row(
         children: [
           Text(
-            '${p.currency} ${p.salePrice!.toStringAsFixed(2)}',
+            '${p.currency} ${sale.toStringAsFixed(2)}',
             style: theme.textTheme.headlineMedium?.copyWith(
               fontWeight: FontWeight.bold,
               color: theme.colorScheme.primary,
@@ -403,7 +427,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
           const SizedBox(width: 12),
           Text(
-            '${p.currency} ${p.regularPrice!.toStringAsFixed(2)}',
+            '${p.currency} ${reg.toStringAsFixed(2)}',
             style: theme.textTheme.titleMedium?.copyWith(
               color: Colors.grey[600],
               decoration: TextDecoration.lineThrough,
@@ -429,7 +453,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       );
     }
     return Text(
-      '${p.currency} ${p.price.toStringAsFixed(2)}',
+      '${p.currency} ${p.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
       style: theme.textTheme.headlineMedium?.copyWith(
         fontWeight: FontWeight.bold,
         color: theme.colorScheme.primary,

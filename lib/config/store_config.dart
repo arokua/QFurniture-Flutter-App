@@ -27,6 +27,18 @@ String storeAddToCartUrl(int productId, {int quantity = 1}) {
   return uri.toString();
 }
 
+/// Build store URL for the product page.
+///
+/// Note: Prefer using the product JSON's `permalink` when available.
+/// This is a fallback that uses WordPress post-by-id routing (`?p=ID`),
+/// which should redirect to the product's real permalink.
+String storeProductUrl(int productId) {
+  if (productId <= 0) return '$kStoreBaseUrl/';
+  return Uri.parse('$kStoreBaseUrl/').replace(
+    queryParameters: {'p': productId.toString()},
+  ).toString();
+}
+
 /// Build store cart page URL.
 String get storeCartUrl => '$kStoreBaseUrl$kStoreCartPath/';
 
@@ -80,6 +92,10 @@ String storeMyAccountLoginUrl({String? accountType}) {
 /// Lost password on storefront (not wp-login.php).
 String get storeLostPasswordUrl =>
     '$kStoreBaseUrl$kStoreMyAccountPath/lost-password/';
+
+/// Single order details in WooCommerce my account.
+String storeOrderViewUrl(int orderId) =>
+    '$kStoreBaseUrl$kStoreMyAccountPath/view-order/$orderId/';
 
 /// Wholesale (B2B) first-order minimum on store — enforced in UI before checkout.
 const double kWholesaleMinimumFirstOrderAud = 500.0;

@@ -12,8 +12,10 @@ import 'category_picker_sheet.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
+import '../../../services/auth_service.dart';
 import '../../../services/product_sync_service.dart';
 import '../../../utils/user_facing_errors.dart';
+import '../domain/product_sku_aliases.dart';
 
 /// Search name, SKU, categories, material, color — not full HTML description (avoids jank/OOM).
 bool productMatchesSearchQuery(Product p, String queryLower) {
@@ -30,6 +32,10 @@ bool productMatchesSearchQuery(Product p, String queryLower) {
   if (m != null && m.toLowerCase().contains(queryLower)) return true;
   final col = p.color;
   if (col != null && col.toLowerCase().contains(queryLower)) return true;
+  final idStr = p.id.toString();
+  if (queryLower == idStr || idStr.contains(queryLower)) return true;
+  final aliasId = kProductSkuCodeToId[queryLower];
+  if (aliasId != null && aliasId == p.id) return true;
   return false;
 }
 
@@ -54,7 +60,6 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
   final allProducts = ref.watch(allProductsProvider).value ?? [];
   final searchQuery = ref.watch(searchQueryProvider);
   final selectedCategory = ref.watch(selectedCategoryProvider);
-  final sortOrder = ref.watch(sortOrderProvider);
 
   var filtered = allProducts;
 
@@ -75,7 +80,7 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
     }).toList();
   }
 
-  return _ProductListScreenState._sortProducts(filtered, sortOrder);
+  return filtered;
 });
 
 class ProductListScreen extends ConsumerStatefulWidget {
@@ -118,7 +123,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final isGridView = ref.watch(viewModeProvider);
     final cart = ref.watch(cartProvider);
-    final cartCount = cartItemCount(cart);
+    // Badge should represent how many different products are in the cart,
+    // not the total quantity of items.
+    final cartCount = cart.length;
     final sortOrder = ref.watch(sortOrderProvider);
 
     return Scaffold(
@@ -356,9 +363,21 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         );
                       }
 
-                      return isGridView
-                          ? _buildGridView(filteredProducts)
-                          : _buildListView(filteredProducts);
+                      return ListenableBuilder(
+                        listenable: AuthService.instance,
+                        builder: (context, _) {
+                          final role =
+                              AuthService.instance.currentSession?.role;
+                          final sorted = _ProductListScreenState._sortProducts(
+                            filteredProducts,
+                            sortOrder,
+                            role,
+                          );
+                          return isGridView
+                              ? _buildGridView(sorted, role)
+                              : _buildListView(sorted, role);
+                        },
+                      );
                     },
                   ),
                 );
@@ -382,8 +401,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         .replaceAll(RegExp(r'\s+'), ' ');
   }
 
-  /// Sort products by [sortOrder]: name_asc, name_desc, price_asc, price_desc (uses current price).
-  static List<Product> _sortProducts(List<Product> products, String sortOrder) {
+  /// Sort products by [sortOrder]: name_asc, name_desc, price_asc, price_desc (role-aware price).
+  static List<Product> _sortProducts(
+    List<Product> products,
+    String sortOrder,
+    String? role,
+  ) {
     final list = List<Product>.from(products);
     switch (sortOrder) {
       case 'name_asc':
@@ -393,10 +416,14 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         list.sort((a, b) => b.name.compareTo(a.name));
         break;
       case 'price_asc':
-        list.sort((a, b) => a.price.compareTo(b.price));
+        list.sort((a, b) => a
+            .displayCurrentPriceForRole(role)
+            .compareTo(b.displayCurrentPriceForRole(role)));
         break;
       case 'price_desc':
-        list.sort((a, b) => b.price.compareTo(a.price));
+        list.sort((a, b) => b
+            .displayCurrentPriceForRole(role)
+            .compareTo(a.displayCurrentPriceForRole(role)));
         break;
       default:
         list.sort((a, b) => a.name.compareTo(b.name));
@@ -426,7 +453,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     }
   }
 
-  Widget _buildGridView(List<Product> products) {
+  Widget _buildGridView(List<Product> products, String? role) {
     return GridView.builder(
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -436,19 +463,21 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         mainAxisSpacing: 14,
       ),
       itemCount: products.length,
-      itemBuilder: (context, index) => _buildProductCard(products[index]),
+      itemBuilder: (context, index) =>
+          _buildProductCard(products[index], role),
     );
   }
 
-  Widget _buildListView(List<Product> products) {
+  Widget _buildListView(List<Product> products, String? role) {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: products.length,
-      itemBuilder: (context, index) => _buildProductListItem(products[index]),
+      itemBuilder: (context, index) =>
+          _buildProductListItem(products[index], role),
     );
   }
 
-  Widget _buildProductCard(Product product) {
+  Widget _buildProductCard(Product product, String? role) {
     final isFavorite = ref.watch(favoritesProvider).contains(product.id);
     final isUrl = isImageUrl(product.primaryImage);
     final folder = productFolder(product.sku, product.id);
@@ -482,7 +511,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () => _showQuickView(context, product, ref),
+        onTap: () => _showQuickView(context, product, ref, role),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -606,7 +635,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerLeft,
-                          child: _buildPriceRow(context, product),
+                          child: _buildPriceRow(context, product, role),
                         ),
                       ),
                     ],
@@ -632,11 +661,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     return pct > 0 ? '-$pct%' : 'Sale';
   }
 
-  Widget _buildPriceRow(BuildContext context, Product product) {
+  Widget _buildPriceRow(BuildContext context, Product product, String? role) {
     final theme = Theme.of(context);
-    if (product.onSale &&
-        product.regularPrice != null &&
-        product.salePrice != null) {
+    final sale = product.displaySalePriceForRole(role);
+    final reg = product.displayRegularPriceForRole(role);
+    if (product.onSale && sale != null && reg != null) {
       return FittedBox(
         fit: BoxFit.scaleDown,
         alignment: Alignment.centerLeft,
@@ -644,7 +673,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '${product.currency} ${product.salePrice!.toStringAsFixed(2)}',
+              '${product.currency} ${sale.toStringAsFixed(2)}',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 15,
@@ -653,7 +682,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             ),
             const SizedBox(width: 6),
             Text(
-              '${product.currency} ${product.regularPrice!.toStringAsFixed(2)}',
+              '${product.currency} ${reg.toStringAsFixed(2)}',
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.grey[600],
@@ -681,7 +710,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       );
     }
     return Text(
-      '${product.currency} ${product.price.toStringAsFixed(2)}',
+      '${product.currency} ${product.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
       style: TextStyle(
         fontWeight: FontWeight.bold,
         fontSize: 15,
@@ -690,7 +719,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     );
   }
 
-  Widget _buildProductListItem(Product product) {
+  Widget _buildProductListItem(Product product, String? role) {
     final isFavorite = ref.watch(favoritesProvider).contains(product.id);
     final isUrl = isImageUrl(product.primaryImage);
     final folder = productFolder(product.sku, product.id);
@@ -725,7 +754,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () => _showQuickView(context, product, ref),
+        onTap: () => _showQuickView(context, product, ref, role),
         child: Row(
           children: [
             // Product Image
@@ -849,7 +878,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
-                            child: _buildPriceRow(context, product),
+                            child: _buildPriceRow(context, product, role),
                           ),
                         ),
                       ],
@@ -934,18 +963,24 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   }
 }
 
-void _showQuickView(BuildContext context, Product product, WidgetRef ref) {
+void _showQuickView(
+  BuildContext context,
+  Product product,
+  WidgetRef ref,
+  String? role,
+) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => _QuickViewModal(product: product),
+    builder: (context) => _QuickViewModal(product: product, role: role),
   );
 }
 
 class _QuickViewModal extends ConsumerStatefulWidget {
   final Product product;
-  const _QuickViewModal({required this.product});
+  final String? role;
+  const _QuickViewModal({required this.product, required this.role});
 
   @override
   ConsumerState<_QuickViewModal> createState() => _QuickViewModalState();
@@ -1049,7 +1084,7 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '${p.currency} ${p.price.toStringAsFixed(2)}',
+                      '${p.currency} ${p.displayCurrentPriceForRole(widget.role).toStringAsFixed(2)}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
@@ -1148,24 +1183,27 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                           ref
                               .read(cartProvider.notifier)
                               .add(p.id, quantity: _quantity);
-                          var remoteOk = await StoreCartApiService.instance
-                              .addItem(p.id, quantity: _quantity);
-                          if (!remoteOk) {
-                            final cart = ref.read(cartProvider);
+                          var remoteOk = true;
+                          if (!AuthService.instance.isWholesaleCartLocalOnly) {
                             remoteOk = await StoreCartApiService.instance
-                                .syncCartToOnline(
-                              cart
-                                  .map((e) => (
-                                        productId: e.productId,
-                                        quantity: e.quantity,
-                                      ))
-                                  .toList(),
-                            );
-                          }
-                          if (remoteOk) {
-                            await ref
-                                .read(cartProvider.notifier)
-                                .refreshFromRemote();
+                                .addItem(p.id, quantity: _quantity);
+                            if (!remoteOk) {
+                              final cart = ref.read(cartProvider);
+                              remoteOk = await StoreCartApiService.instance
+                                  .syncCartToOnline(
+                                cart
+                                    .map((e) => (
+                                          productId: e.productId,
+                                          quantity: e.quantity,
+                                        ))
+                                    .toList(),
+                              );
+                            }
+                            if (remoteOk) {
+                              await ref
+                                  .read(cartProvider.notifier)
+                                  .refreshFromRemote();
+                            }
                           }
                           if (!context.mounted) return;
                           Navigator.pop(context);

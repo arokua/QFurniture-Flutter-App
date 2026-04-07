@@ -95,7 +95,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
               const SizedBox(height: 32),
               Text(
-                'Welcome to qtoys',
+                'Partner sign in',
                 style: theme.textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: cs.onSurface,
@@ -161,25 +161,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              // Skip button
               TextButton(
                 onPressed: _isLoading ? null : _handleSkip,
                 child: Text(
-                  'Browse as guest',
+                  'Back to catalogue',
                   style: TextStyle(color: cs.outline, fontWeight: FontWeight.w600),
                 ),
-              ),
-              const SizedBox(height: 32),
-              // Registration (placeholder)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('Don\'t have an account? '),
-                  TextButton(
-                    onPressed: () => context.push(AppRoutes.register),
-                    child: const Text('Register'),
-                  ),
-                ],
               ),
             ],
           ),

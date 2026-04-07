@@ -51,6 +51,11 @@ class AuthService extends ChangeNotifier {
       ));
     } else {
       _sessionController.add(null);
+      // Default: browse catalogue without partner login (retailer prices for guests).
+      final guest = _prefs!.getBool(_guestBrowseKey) ?? false;
+      if (!guest) {
+        await _prefs!.setBool(_guestBrowseKey, true);
+      }
     }
     notifyListeners();
   }
@@ -79,6 +84,10 @@ class AuthService extends ChangeNotifier {
 
   /// May open the main app: real login **or** guest browse (PWA-style offline).
   bool get canAccessApp => isSignedIn || isGuestBrowse;
+
+  /// Wholesale accounts: cart stays local only (no Woo Store API sync).
+  bool get isWholesaleCartLocalOnly =>
+      currentSession?.role.toLowerCase() == 'wholesale';
   bool get hasWebLoginCredentials =>
       (_lastAuthEmail != null && _lastAuthEmail!.isNotEmpty) &&
       (_lastAuthPassword != null && _lastAuthPassword!.isNotEmpty);
@@ -159,7 +168,7 @@ class AuthService extends ChangeNotifier {
     await _prefs?.remove(_tokenKey);
     await _prefs?.remove(_customerIdKey);
     await _prefs?.setBool(_loggedInKey, false);
-    await _prefs?.remove(_guestBrowseKey);
+    await _prefs?.setBool(_guestBrowseKey, true);
     _lastAuthEmail = null;
     _lastAuthPassword = null;
     _sessionController.add(null);
