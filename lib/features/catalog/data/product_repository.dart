@@ -45,6 +45,7 @@ class ProductRepository {
             sku: remoteProduct.sku,
             variants: remoteProduct.variants,
             material: remoteProduct.material,
+            finish: remoteProduct.finish,
             assemblyRequired: remoteProduct.assemblyRequired,
             color: remoteProduct.color,
             weight: remoteProduct.weight,

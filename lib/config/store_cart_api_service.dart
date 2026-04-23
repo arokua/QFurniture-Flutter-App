@@ -1,12 +1,17 @@
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:webview_flutter/webview_flutter.dart';
 import 'store_config.dart';
 
 /// WooCommerce Store API (wc/store/v1) cart: add, remove, update.
 /// Cart is session-based; we persist cookie from first add so remove/update work.
 /// Endpoints: POST add-item, GET items, DELETE items/:key, PUT items/:key.
+///
+/// Note: add-to-cart for checkout is handled via the WebView ?add-to-cart= URL
+/// flow, not this service. This service handles session management and
+/// direct cart reads/writes for non-checkout flows.
 class StoreCartApiService {
   StoreCartApiService._();
   static final StoreCartApiService instance = StoreCartApiService._();
@@ -22,13 +27,54 @@ class StoreCartApiService {
   /// WooCommerce Store API cart token (used instead of cookies/nonces for headless cart sessions).
   /// Header name: `Cart-Token`.
   String? _cartToken;
+  /// JWT Bearer token for server-side auth (bypasses Cart-Token/Nonce requirement on the server).
+  String? _jwtToken;
+
+  /// Fallback JWT set by AuthService at login/restore time.
+  /// Avoids a circular import — AuthService calls [setJwtFallback] instead of being imported here.
+  static String? _jwtFallback;
+
+  /// Called by AuthService after login/restore to provide a fallback JWT.
+  static void setJwtFallback(String? token) {
+    _jwtFallback = token?.trim().isEmpty == true ? null : token?.trim();
+  }
+
   SharedPreferences? _prefs;
+
+  /// 500-error cooldown: tracks last 500 timestamp to avoid hammering a broken endpoint.
+  DateTime? _lastCart500At;
+  static const _cart500CooldownSeconds = 10; // Reduced: 30s was masking real issues
+
+  /// True when the server recently returned 500 — callers should skip and use local state.
+  bool get isTemporarilyUnavailable {
+    if (_lastCart500At == null) return false;
+    return DateTime.now().difference(_lastCart500At!).inSeconds <
+        _cart500CooldownSeconds;
+  }
+
+  void _record500() {
+    _lastCart500At = DateTime.now();
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreCart] 500 recorded — cooling down for ${_cart500CooldownSeconds}s',
+      );
+    }
+  }
+
+  void _clearCooldown() {
+    _lastCart500At = null;
+  }
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
     _cookie = _prefs?.getString('cart_session_cookie');
     // Nonce is not persisted: stale nonces cause POST /cart/add-item to fail after restarts.
     _cartToken = _prefs?.getString('cart_cart_token');
+  }
+
+  /// Set the JWT token so authenticated requests can bypass Store API nonce/token requirement.
+  void setJwtToken(String? token) {
+    _jwtToken = token?.trim().isEmpty == true ? null : token?.trim();
   }
 
   /// True when we have enough info to call the Store API for this cart.
@@ -107,6 +153,46 @@ class StoreCartApiService {
     _captureNonceFromResponse(response);
   }
 
+  /// Public: absorb nonce/cart-token/cookie from any HTTP response.
+  /// Call this after your own GET /cart so the service has the session
+  /// headers for subsequent POST add-item/remove-item calls.
+  Future<void> absorbResponseHeaders(http.Response response) =>
+      _absorbResponse(response);
+
+  /// Force-create/refresh Woo Store API session after JWT login.
+  /// Calls your JWT->cookie bridge, then primes Store API cart session.
+  Future<bool> bootstrapSessionFromJwt(String? jwt) async {
+    final token = jwt?.trim();
+    if (token == null || token.isEmpty) return false;
+    try {
+      final bridge = Uri.parse(jwtCookieBridgeUrl);
+      final res = await http
+          .post(
+            bridge,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'source': 'flutter_app_login'}),
+          )
+          .timeout(const Duration(seconds: 15));
+      await _absorbResponse(res);
+    } catch (_) {
+      // continue with cart prime attempt below
+    }
+
+    try {
+      final cart = await fetchFullCart();
+      if (cart.success && cart.data != null) {
+        await absorbCartSessionFromCartJson(cart.data!);
+      }
+      return hasSession;
+    } catch (_) {
+      return hasSession;
+    }
+  }
+
   /// Persist [Cart-Token] from a WooCommerce Store API `GET /cart` JSON body (e.g. WebView).
   /// Keeps the app's HTTP client on the same cart session as the browser.
   Future<void> absorbCartSessionFromCartJson(Map<String, dynamic> json) async {
@@ -137,70 +223,61 @@ class StoreCartApiService {
     return null;
   }
 
-  Map<String, String> get _headers {
+  /// Headers for GET requests — no Content-Type (avoids Cerber/WP rejecting GETs with body-type header).
+  Map<String, String> get _getHeaders {
+    final h = <String, String>{
+      'Accept': 'application/json',
+      'User-Agent': 'QToysApp/1.0',
+    };
+    if (_cookie != null && _cookie!.isNotEmpty) h['Cookie'] = _cookie!;
+    if (_cartToken != null && _cartToken!.isNotEmpty) h['Cart-Token'] = _cartToken!;
+    if (_storeApiNonce != null && _storeApiNonce!.isNotEmpty) h['Nonce'] = _storeApiNonce!;
+    // Prefer explicitly set token; fall back to AuthService-provided fallback.
+    final jwt = (_jwtToken?.isNotEmpty == true) ? _jwtToken! : _jwtFallback;
+    if (jwt != null && jwt.isNotEmpty) h['Authorization'] = 'Bearer $jwt';
+    return h;
+  }
+
+  /// Headers for POST/PUT/DELETE requests — includes Content-Type.
+  Map<String, String> get _postHeaders {
     final h = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'User-Agent': 'QFurnitureApp/1.0 (WooCommerce Store API)',
+      'User-Agent': 'QToysApp/1.0',
     };
-    if (_cookie != null) h['Cookie'] = _cookie!;
-    if (_cartToken != null && _cartToken!.isNotEmpty) {
-      h['Cart-Token'] = _cartToken!;
-    }
-    if (_storeApiNonce != null && _storeApiNonce!.isNotEmpty) {
-      h['Nonce'] = _storeApiNonce!;
-    }
+    if (_cookie != null && _cookie!.isNotEmpty) h['Cookie'] = _cookie!;
+    if (_cartToken != null && _cartToken!.isNotEmpty) h['Cart-Token'] = _cartToken!;
+    if (_storeApiNonce != null && _storeApiNonce!.isNotEmpty) h['Nonce'] = _storeApiNonce!;
+    final jwt = (_jwtToken?.isNotEmpty == true) ? _jwtToken! : _jwtFallback;
+    if (jwt != null && jwt.isNotEmpty) h['Authorization'] = 'Bearer $jwt';
     return h;
   }
 
   /// Prime session cookie + nonce before first add-item (many servers reject POST without nonce).
   Future<void> _ensureStoreApiSessionPrimed() async {
-    // Prime session cookie + cart token / nonce so POST requests can succeed.
     if ((_cartToken != null && _cartToken!.isNotEmpty) ||
         (_storeApiNonce != null && _storeApiNonce!.isNotEmpty)) {
       return;
     }
     try {
-      if (kDebugMode) {
-        debugPrint('[StoreCart] priming session nonce via GET /cart ...');
-      }
-      Future<http.Response> getCart(Uri u) =>
-          http.get(u, headers: _headers).timeout(const Duration(seconds: 15));
+      if (kDebugMode) debugPrint('[StoreCart] priming session via GET /cart ...');
 
-      // Try both endpoints: some hosts attach the nonce to one but not the other.
-      final resCart = await getCart(_cartRoot);
+      final resCart = await http
+          .get(_cartRoot, headers: _getHeaders)
+          .timeout(const Duration(seconds: 15));
       if (kDebugMode) {
-        debugPrint(
-          '[StoreCart] prime GET /cart status=${resCart.statusCode} contentType=${resCart.headers['content-type']} bodyLen=${resCart.body.length}',
-        );
+        debugPrint('[StoreCart] prime GET /cart status=${resCart.statusCode} bodyLen=${resCart.body.length}');
       }
       await _absorbResponse(resCart);
 
       if (_storeApiNonce == null || _storeApiNonce!.isEmpty) {
+        final resItems = await http
+            .get(_cartItems, headers: _getHeaders)
+            .timeout(const Duration(seconds: 15));
         if (kDebugMode) {
-          debugPrint(
-            '[StoreCart] no nonce after GET /cart status=${resCart.statusCode}; trying GET /cart/items...',
-          );
-        }
-        final resItems = await getCart(_cartItems);
-        if (kDebugMode) {
-          debugPrint(
-            '[StoreCart] prime GET /cart/items status=${resItems.statusCode} contentType=${resItems.headers['content-type']} bodyLen=${resItems.body.length}',
-          );
+          debugPrint('[StoreCart] prime GET /cart/items status=${resItems.statusCode}');
         }
         await _absorbResponse(resItems);
-
-        if (kDebugMode) {
-          debugPrint(
-            '[StoreCart] after GET /cart/items status=${resItems.statusCode} noncePresent=${_storeApiNonce != null && _storeApiNonce!.isNotEmpty}',
-          );
-        }
-      } else {
-        if (kDebugMode) {
-          debugPrint(
-            '[StoreCart] nonce present after GET /cart status=${resCart.statusCode} nonceLen=${_storeApiNonce!.length}',
-          );
-        }
       }
     } catch (_) {}
   }
@@ -217,40 +294,23 @@ class StoreCartApiService {
   Future<bool> addItem(int productId, {int quantity = 1}) async {
     Future<bool> tryPost() async {
       await _ensureStoreApiSessionPrimed();
-      if (kDebugMode) {
-        debugPrint(
-          '[StoreCart] nonce before POST add-item: ${_storeApiNonce == null ? 'null' : '${_storeApiNonce!.substring(0, 8)}…'}',
-        );
-      }
       final body = jsonEncode({'id': productId, 'quantity': quantity});
       try {
         final res = await http
-            .post(
-              _cartAddItem,
-              headers: _headers,
-              body: body,
-            )
+            .post(_cartAddItem, headers: _postHeaders, body: body)
             .timeout(const Duration(seconds: 15));
         await _absorbResponse(res);
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          return true;
-        }
+        if (res.statusCode >= 200 && res.statusCode < 300) return true;
         _logCartFailure('POST add-item', res);
       } catch (e) {
         if (kDebugMode) debugPrint('[StoreCart] POST add-item error: $e');
       }
       try {
         final res = await http
-            .post(
-              _cartItems,
-              headers: _headers,
-              body: body,
-            )
+            .post(_cartItems, headers: _postHeaders, body: body)
             .timeout(const Duration(seconds: 15));
         await _absorbResponse(res);
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          return true;
-        }
+        if (res.statusCode >= 200 && res.statusCode < 300) return true;
         _logCartFailure('POST cart/items', res);
         return false;
       } catch (e) {
@@ -261,66 +321,46 @@ class StoreCartApiService {
 
     final ok = await tryPost();
     if (ok) return true;
-    // Stale nonce after app restart; re-fetch from GET /cart and retry once.
     _storeApiNonce = null;
     return tryPost();
   }
 
-  /// Syncs an entire local cart to the online store via the batch endpoint.
-  Future<bool> syncCartToOnline(
-      List<({int productId, int quantity})> items) async {
-    if (items.isEmpty) return true;
-    await _ensureStoreApiSessionPrimed();
+  // Note: syncCartToOnline (batch endpoint) has been removed.
+  // Cart items are now synced to WooCommerce via the WebView ?add-to-cart= URL
+  // queue in StoreWebViewScreen, which is more reliable and avoids
+  // the audit-checkout.php session header requirements for batch requests.
 
-    try {
-      final requests = items.map((item) {
-        return {
-          'method': 'POST',
-          'path': '/wc/store/v1/cart/add-item',
-          'body': {
-            'id': item.productId,
-            'quantity': item.quantity,
-          }
-        };
-      }).toList();
-
-      final uri = Uri.parse('$_base/batch');
-      final res = await http
-          .post(
-            uri,
-            headers: _headers,
-            body: jsonEncode({'requests': requests}),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        await _absorbResponse(res);
-        return true;
-      }
-      _logCartFailure('POST batch', res);
-      return false;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[StoreCart] batch error: $e');
-      return false;
-    }
-  }
 
   /// GET full cart (Store API) — items, totals, shipping_rates, etc.
   /// [success] is false when the request failed (do not treat as empty cart).
   Future<({bool success, Map<String, dynamic>? data})> fetchFullCart() async {
+    if (isTemporarilyUnavailable) {
+      if (kDebugMode) debugPrint('[StoreCart] skipping GET cart — in 500 cooldown');
+      return (success: false, data: null);
+    }
     try {
-      final res = await http.get(_cartRoot, headers: _headers).timeout(
-            const Duration(seconds: 15),
-          );
+      if (kDebugMode) debugPrint('[StoreCart] GET $_cartRoot');
+      // Use _getHeaders (no Content-Type) — sending Content-Type on a GET
+      // was causing Cerber/audit-checkout.php to return 500.
+      final res = await http
+          .get(_cartRoot, headers: _getHeaders)
+          .timeout(const Duration(seconds: 15));
       await _absorbResponse(res);
+      if (res.statusCode == 500) {
+        _record500();
+        if (kDebugMode) {
+          debugPrint('[StoreCart] GET cart → 500. body=${res.body.length > 300 ? res.body.substring(0, 300) : res.body}');
+        }
+        return (success: false, data: null);
+      }
       if (res.statusCode != 200) {
         _logCartFailure('GET cart', res);
         return (success: false, data: null);
       }
+      _clearCooldown();
+      if (kDebugMode) debugPrint('[StoreCart] GET cart → ${res.statusCode} len=${res.body.length}');
       final data = jsonDecode(res.body);
-      if (data is Map<String, dynamic>) {
-        return (success: true, data: data);
-      }
+      if (data is Map<String, dynamic>) return (success: true, data: data);
       return (success: false, data: null);
     } catch (_) {
       return (success: false, data: null);
@@ -330,9 +370,9 @@ class StoreCartApiService {
   /// GET cart items (lightweight list for keys / product ids).
   Future<List<({int id, String key, int quantity})>> getItems() async {
     try {
-      final res = await http.get(_cartItems, headers: _headers).timeout(
-            const Duration(seconds: 10),
-          );
+      final res = await http
+          .get(_cartItems, headers: _getHeaders)
+          .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return [];
       await _absorbResponse(res);
       final list = jsonDecode(res.body) as List<dynamic>?;
@@ -359,20 +399,18 @@ class StoreCartApiService {
   Future<bool> removeItem(String key) async {
     if (!hasSession) return false;
     try {
-      final uri = Uri.parse('$_base/cart/remove-item').replace(
-        queryParameters: {'key': key},
-      );
-      final res = await http.post(uri, headers: _headers).timeout(
-            const Duration(seconds: 10),
-          );
+      final uri = Uri.parse('$_base/cart/remove-item')
+          .replace(queryParameters: {'key': key});
+      final res = await http
+          .post(uri, headers: _postHeaders)
+          .timeout(const Duration(seconds: 10));
       await _absorbResponse(res);
       if (res.statusCode >= 200 && res.statusCode < 300) return true;
-      // Some stacks still expose DELETE /cart/items/{key}
       try {
         final legacy = Uri.parse('$_base/cart/items/$key');
-        final res2 = await http.delete(legacy, headers: _headers).timeout(
-              const Duration(seconds: 10),
-            );
+        final res2 = await http
+            .delete(legacy, headers: _postHeaders)
+            .timeout(const Duration(seconds: 10));
         await _absorbResponse(res2);
         return res2.statusCode >= 200 && res2.statusCode < 300;
       } catch (_) {
@@ -405,25 +443,19 @@ class StoreCartApiService {
     if (!hasSession) return false;
     if (quantity <= 0) return removeItem(key);
     try {
-      final uri = Uri.parse('$_base/cart/update-item').replace(
-        queryParameters: {
-          'key': key,
-          'quantity': quantity.toString(),
-        },
-      );
-      final res = await http.post(uri, headers: _headers).timeout(
-            const Duration(seconds: 10),
-          );
+      final uri = Uri.parse('$_base/cart/update-item')
+          .replace(queryParameters: {'key': key, 'quantity': quantity.toString()});
+      final res = await http
+          .post(uri, headers: _postHeaders)
+          .timeout(const Duration(seconds: 10));
       await _absorbResponse(res);
       if (res.statusCode >= 200 && res.statusCode < 300) return true;
       try {
-        final legacy =
-            Uri.parse('$_base/cart/items/$key').replace(queryParameters: {
-          'quantity': quantity.toString(),
-        });
-        final res2 = await http.put(legacy, headers: _headers).timeout(
-              const Duration(seconds: 10),
-            );
+        final legacy = Uri.parse('$_base/cart/items/$key')
+            .replace(queryParameters: {'quantity': quantity.toString()});
+        final res2 = await http
+            .put(legacy, headers: _postHeaders)
+            .timeout(const Duration(seconds: 10));
         await _absorbResponse(res2);
         return res2.statusCode >= 200 && res2.statusCode < 300;
       } catch (_) {
@@ -454,6 +486,17 @@ class StoreCartApiService {
     _cartToken = null;
     await _prefs?.remove('cart_session_cookie');
     await _prefs?.remove('cart_cart_token');
+  }
+
+  /// Clears platform WebView cookie jar so Woo auth/cart does not survive app logout.
+  Future<void> clearEmbeddedWebViewCookies() async {
+    if (kIsWeb) return;
+    try {
+      final cm = WebViewCookieManager();
+      await cm.clearCookies();
+    } catch (_) {
+      // Best-effort
+    }
   }
 }
 

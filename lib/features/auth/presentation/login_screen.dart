@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
+import '../../../config/store_cart_api_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
 
@@ -26,6 +27,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
+    if (_isLoading) return;
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -47,6 +49,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (mounted) {
       setState(() => _isLoading = false);
       if (result.isSuccess) {
+        await StoreCartApiService.instance
+            .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
         // Sync local cart to Woo Store API before any WebView pulls an empty logged-in cart.
         await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
         if (!mounted) return;

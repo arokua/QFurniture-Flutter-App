@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../config/store_cart_api_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
 
@@ -77,6 +78,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
     if (mounted) {
       setState(() => _isLoading = false);
       if (result.isSuccess) {
+        await StoreCartApiService.instance
+            .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
         await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
       } else {
         setState(() => _error = result.errorMessage);

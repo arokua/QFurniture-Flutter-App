@@ -7,6 +7,11 @@ String get kStoreBaseUrl => dotenv.env['STORE_BASE_URL'] ?? 'https://qtoys.com.a
 String get kWooKey => dotenv.env['WOO_KEY'] ?? '';
 String get kWooSecret => dotenv.env['WOO_SECRET'] ?? '';
 
+/// Site-level JWT token from .env (JWT_TOKEN in wp-config.php JWT_AUTH_SECRET_KEY).
+/// Used for admin-scoped REST API calls (e.g. customer registration) so
+/// wp-cerber recognises the request as authenticated app traffic.
+String get kSiteJwtToken => dotenv.env['JWT_TOKEN'] ?? '';
+
 /// Paths on the store (WooCommerce default).
 const String kStoreCartPath = '/cart';
 const String kStoreCheckoutPath = '/checkout';
@@ -20,7 +25,7 @@ String storeAddToCartUrl(int productId, {int quantity = 1}) {
   if (quantity <= 0) return '$kStoreBaseUrl/';
   final uri = Uri.parse('$kStoreBaseUrl/').replace(
     queryParameters: {
-      'add_to_cart': productId.toString(),
+      'add-to-cart': productId.toString(),
       if (quantity > 1) 'quantity': quantity.toString(),
     },
   );
@@ -91,14 +96,16 @@ String storeMyAccountLoginUrl({String? accountType}) {
 
 /// Lost password on storefront (not wp-login.php).
 String get storeLostPasswordUrl =>
-    '$kStoreBaseUrl$kStoreMyAccountPath/lost-password/';
+    '$kStoreBaseUrl$kStoreMyAccountPath/edit-account/';
 
 /// Single order details in WooCommerce my account.
 String storeOrderViewUrl(int orderId) =>
     '$kStoreBaseUrl$kStoreMyAccountPath/view-order/$orderId/';
 
-/// Wholesale (B2B) first-order minimum on store — enforced in UI before checkout.
+/// Wholesale (B2B) minimum order — first completed order uses [kWholesaleMinimumFirstOrderAud],
+/// subsequent orders use [kWholesaleMinimumReturningOrderAud] (enforced in cart before checkout).
 const double kWholesaleMinimumFirstOrderAud = 500.0;
+const double kWholesaleMinimumReturningOrderAud = 350.0;
 
 /// Build URL that adds multiple items to store cart.
 /// Standard WooCommerce only handles one add_to_cart per request; we add first item

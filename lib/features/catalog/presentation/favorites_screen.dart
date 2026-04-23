@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../data/favorites_provider.dart';
 import '../domain/product.dart';
+import '../domain/product_pricing_policy.dart';
+import '../../../services/auth_service.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
@@ -146,12 +148,33 @@ class _FavoriteProductTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '${product.currency} ${product.price.toStringAsFixed(2)}',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
+                    ListenableBuilder(
+                      listenable: AuthService.instance,
+                      builder: (context, _) {
+                        final hidden = skuRequiresLoginToViewPrice(product.sku) &&
+                            !AuthService.instance.isSignedIn;
+                        if (hidden) {
+                          return Text(
+                            'Sign in to view price',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.65),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          );
+                        }
+                        final role =
+                            AuthService.instance.currentSession?.role;
+                        return Text(
+                          '${product.currency} ${product.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                        );
+                      },
                     ),
                   ],
                 ),

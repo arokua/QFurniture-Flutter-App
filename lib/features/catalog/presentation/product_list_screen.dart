@@ -6,8 +6,10 @@ import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../cart/data/cart_provider.dart';
-import '../data/favorites_provider.dart';
+import '../../cart/data/woo_cart_provider.dart';
+import '../../cart/presentation/widgets/stock_quantity_field.dart';
 import '../domain/product.dart';
+import '../domain/product_pricing_policy.dart';
 import 'category_picker_sheet.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
@@ -122,10 +124,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     final searchQuery = ref.watch(searchQueryProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final isGridView = ref.watch(viewModeProvider);
-    final cart = ref.watch(cartProvider);
-    // Badge should represent how many different products are in the cart,
-    // not the total quantity of items.
-    final cartCount = cart.length;
+    final wooAsync = ref.watch(wooCartProvider);
+    // Badge should represent how many different products are in the cart.
+    // Use the backend source of truth so it matches the Checkout and Cart screens.
+    final cartCount = wooAsync.valueOrNull?.snapshot?.lines.length ?? ref.watch(cartProvider).length;
+    
     final sortOrder = ref.watch(sortOrderProvider);
 
     return Scaffold(
@@ -478,7 +481,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   }
 
   Widget _buildProductCard(Product product, String? role) {
-    final isFavorite = ref.watch(favoritesProvider).contains(product.id);
     final isUrl = isImageUrl(product.primaryImage);
     final folder = productFolder(product.sku, product.id);
     String imagePath;
@@ -540,25 +542,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                           errorBuilder: (_, __, ___) =>
                               _buildImagePlaceholder(),
                         ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: IconButton(
-                      icon: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                        color: isFavorite ? Colors.red : Colors.white,
-                        size: 22,
-                      ),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black26,
-                        padding: const EdgeInsets.all(4),
-                        minimumSize: const Size(32, 32),
-                      ),
-                      onPressed: () => ref
-                          .read(favoritesProvider.notifier)
-                          .toggle(product.id),
-                    ),
-                  ),
                   if (!product.inStock)
                     Positioned(
                       top: 48,
@@ -579,7 +562,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         ),
                       ),
                     ),
-                  if (product.onSale &&
+                  if (!_hidePriceForGuest(product) &&
+                      product.onSale &&
                       product.regularPrice != null &&
                       product.regularPrice! > 0 &&
                       product.salePrice != null)
@@ -649,6 +633,10 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     );
   }
 
+  bool _hidePriceForGuest(Product product) =>
+      skuRequiresLoginToViewPrice(product.sku) &&
+      !AuthService.instance.isSignedIn;
+
   String _discountPercent(Product product) {
     if (!product.onSale ||
         product.regularPrice == null ||
@@ -663,6 +651,39 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
   Widget _buildPriceRow(BuildContext context, Product product, String? role) {
     final theme = Theme.of(context);
+    if (_hidePriceForGuest(product)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline, size: 15, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Sign in to view price',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          TextButton(
+            onPressed: () => context.push(AppRoutes.login),
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Sign in'),
+          ),
+        ],
+      );
+    }
     final sale = product.displaySalePriceForRole(role);
     final reg = product.displayRegularPriceForRole(role);
     if (product.onSale && sale != null && reg != null) {
@@ -720,7 +741,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   }
 
   Widget _buildProductListItem(Product product, String? role) {
-    final isFavorite = ref.watch(favoritesProvider).contains(product.id);
     final isUrl = isImageUrl(product.primaryImage);
     final folder = productFolder(product.sku, product.id);
     String imagePath;
@@ -783,25 +803,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                           errorBuilder: (_, __, ___) =>
                               _buildImagePlaceholder(),
                         ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: IconButton(
-                      icon: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                        color: isFavorite ? Colors.red : Colors.white,
-                        size: 20,
-                      ),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black26,
-                        padding: const EdgeInsets.all(4),
-                        minimumSize: const Size(28, 28),
-                      ),
-                      onPressed: () => ref
-                          .read(favoritesProvider.notifier)
-                          .toggle(product.id),
-                    ),
-                  ),
                   if (!product.inStock)
                     Positioned.fill(
                       child: Container(
@@ -816,7 +817,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         ),
                       ),
                     ),
-                  if (product.onSale &&
+                  if (!_hidePriceForGuest(product) &&
+                      product.onSale &&
                       product.regularPrice != null &&
                       product.regularPrice! > 0 &&
                       product.salePrice != null)
@@ -988,6 +990,16 @@ class _QuickViewModal extends ConsumerStatefulWidget {
 
 class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
   int _quantity = 1;
+  bool _isAdding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final cap = widget.product.parsedStockQuantityApprox;
+    if (cap != null && cap > 0 && _quantity > cap) {
+      _quantity = cap;
+    }
+  }
 
   String _imagePath(Product p) {
     if (isImageUrl(p.primaryImage)) return p.primaryImage;
@@ -1009,6 +1021,31 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
     final imagePath = _imagePath(p);
     final isUrl = isImageUrl(p.primaryImage);
 
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final locked = skuRequiresLoginToViewPrice(p.sku) &&
+            !AuthService.instance.isSignedIn;
+        return _quickViewBody(
+          context,
+          theme,
+          p,
+          imagePath,
+          isUrl,
+          locked,
+        );
+      },
+    );
+  }
+
+  Widget _quickViewBody(
+    BuildContext context,
+    ThemeData theme,
+    Product p,
+    String imagePath,
+    bool isUrl,
+    bool priceLocked,
+  ) {
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -1021,7 +1058,9 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
         left: 20,
         right: 20,
         top: 12,
-        bottom: MediaQuery.of(context).padding.bottom + 20,
+        bottom: MediaQuery.of(context).padding.bottom +
+            MediaQuery.of(context).viewInsets.bottom +
+            20,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1083,14 +1122,43 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      '${p.currency} ${p.displayCurrentPriceForRole(widget.role).toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: theme.colorScheme.primary,
+                    if (priceLocked)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.lock_outline,
+                                  size: 18, color: theme.colorScheme.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Partner pricing is available after you sign in.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              context.push(AppRoutes.login);
+                            },
+                            child: const Text('Sign in to view price'),
+                          ),
+                        ],
+                      )
+                    else
+                      Text(
+                        '${p.currency} ${p.displayCurrentPriceForRole(widget.role).toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: theme.colorScheme.primary,
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 8),
                     if (p.stockAmount != null || !p.inStock)
                       Container(
@@ -1116,122 +1184,123 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Quantity',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(8),
+          if (!priceLocked) ...[
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Quantity',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
                 ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.remove, size: 20),
-                      onPressed: _quantity > 1
-                          ? () => setState(() => _quantity--)
-                          : null,
+                p.inStock
+                    ? StockQuantityField(
+                        quantity: _quantity,
+                        stockCeiling: p.parsedStockQuantityApprox,
+                        onChanged: (n) => setState(() => _quantity = n),
+                      )
+                    : Text(
+                        'Out of stock',
+                        style: TextStyle(
+                          color: theme.colorScheme.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      context.push(
+                        AppRoutes.product(p.id),
+                        extra: p,
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    Text(
-                      '$_quantity',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add, size: 20),
-                      onPressed: p.inStock
-                          ? () => setState(() => _quantity++)
-                          : null,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    context.push(
-                      AppRoutes.product(p.id),
-                      extra: p,
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                    child: const Text('View Details'),
                   ),
-                  child: const Text('View Details'),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: FilledButton.icon(
-                  onPressed: p.inStock
-                      ? () async {
-                          ref
-                              .read(cartProvider.notifier)
-                              .add(p.id, quantity: _quantity);
-                          var remoteOk = true;
-                          if (!AuthService.instance.isWholesaleCartLocalOnly) {
-                            remoteOk = await StoreCartApiService.instance
-                                .addItem(p.id, quantity: _quantity);
-                            if (!remoteOk) {
-                              final cart = ref.read(cartProvider);
-                              remoteOk = await StoreCartApiService.instance
-                                  .syncCartToOnline(
-                                cart
-                                    .map((e) => (
-                                          productId: e.productId,
-                                          quantity: e.quantity,
-                                        ))
-                                    .toList(),
-                              );
-                            }
-                            if (remoteOk) {
-                              await ref
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton.icon(
+                    onPressed: (p.inStock && !_isAdding)
+                        ? () async {
+                            setState(() => _isAdding = true);
+                            try {
+                              ref
                                   .read(cartProvider.notifier)
-                                  .refreshFromRemote();
+                                  .add(p.id, quantity: _quantity);
+                              var remoteOk = true;
+                              remoteOk = await StoreCartApiService.instance
+                                  .addItem(p.id, quantity: _quantity);
+                              if (!context.mounted) return;
+                              if (remoteOk) ref.invalidate(wooCartProvider);
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(remoteOk
+                                      ? 'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'
+                                      : 'Added locally. Cart will sync to the store at checkout.'),
+                                  duration: const Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                ),
+                              );
+                            } finally {
+                              if (mounted) setState(() => _isAdding = false);
                             }
                           }
-                          if (!context.mounted) return;
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(remoteOk
-                                  ? 'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'
-                                  : 'Added locally. Online cart sync failed; try Checkout sync.'),
-                              duration: const Duration(seconds: 2),
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                          );
-                        }
-                      : null,
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                        : null,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
+                    icon: _isAdding
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2))
+                        : const Icon(Icons.shopping_bag_outlined),
+                    label: Text(p.inStock
+                        ? (_isAdding ? 'Adding...' : 'Add to Cart')
+                        : 'Out of Stock'),
                   ),
-                  icon: const Icon(Icons.shopping_bag_outlined),
-                  label: const Text('Add to Cart'),
                 ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  context.push(AppRoutes.product(p.id), extra: p);
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('View product details'),
               ),
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );

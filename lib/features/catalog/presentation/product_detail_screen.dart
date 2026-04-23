@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../app_router.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
@@ -9,7 +12,9 @@ import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
+import '../../cart/data/woo_cart_provider.dart';
 import '../domain/product.dart';
+import '../domain/product_pricing_policy.dart';
 import '../../../utils/user_facing_errors.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
@@ -23,6 +28,7 @@ class ProductDetailScreen extends ConsumerStatefulWidget {
 
 class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   int _selectedImageIndex = 0;
+  bool _isAdding = false;
   final PageController _pageController = PageController();
   bool _descriptionExpanded = false;
   late Future<Product?> _productFuture;
@@ -79,65 +85,76 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         // ProductRepository.getById already does the remote fetch.
         
         final decodedName = decodeHtmlEntities(p.name);
-        return Scaffold(
-          body: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: SizedBox(
-                  height: 420,
-                  child: _buildImageGallery(p),
-                ),
-              ),
-              SliverAppBar(
-                pinned: true,
-                title: Text(
-                  decodedName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    shadows: [
-                      Shadow(color: Colors.black54, blurRadius: 4),
-                    ],
-                  ),
-                ),
-                backgroundColor:
-                    Theme.of(context).colorScheme.primaryContainer,
-              ),
-              SliverToBoxAdapter(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isSmall = constraints.maxWidth < 600;
-                    final mainContent = _buildDetailMainContent(context, p);
-                    final sidebar = _buildDetailSidebar(context, p);
-                    if (!isSmall && constraints.maxWidth > 750) {
-                      return Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(flex: 3, child: mainContent),
-                            const SizedBox(width: 32),
-                            SizedBox(width: 300, child: sidebar),
+        return ListenableBuilder(
+          listenable: AuthService.instance,
+          builder: (context, _) {
+            return Scaffold(
+              body: SafeArea(
+                top: false,
+                bottom: true,
+                left: false,
+                right: false,
+                child: CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 420,
+                        child: _buildImageGallery(p),
+                      ),
+                    ),
+                    SliverAppBar(
+                      pinned: true,
+                      title: Text(
+                        decodedName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(color: Colors.black54, blurRadius: 4),
                           ],
                         ),
-                      );
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.all(20.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          mainContent,
-                          const SizedBox(height: 32),
-                          sidebar
-                        ],
                       ),
-                    );
-                  },
+                      backgroundColor:
+                          Theme.of(context).colorScheme.primaryContainer,
+                    ),
+                    SliverToBoxAdapter(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isSmall = constraints.maxWidth < 600;
+                          final mainContent = _buildDetailMainContent(context, p);
+                          final sidebar = _buildDetailSidebar(context, p);
+                          if (!isSmall && constraints.maxWidth > 750) {
+                            return Padding(
+                              padding: const EdgeInsets.all(20.0),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(flex: 3, child: mainContent),
+                                  const SizedBox(width: 32),
+                                  SizedBox(width: 300, child: sidebar),
+                                ],
+                              ),
+                            );
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.all(20.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                mainContent,
+                                const SizedBox(height: 32),
+                                sidebar
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -149,6 +166,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       listenable: AuthService.instance,
       builder: (context, _) {
         final role = AuthService.instance.currentSession?.role;
+        final priceHidden = skuRequiresLoginToViewPrice(p.sku) &&
+            !AuthService.instance.isSignedIn;
         return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -164,7 +183,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(child: _buildDetailPrice(theme, p, role)),
+            Expanded(child: _buildDetailPrice(context, theme, p, role)),
           ],
         ),
         const SizedBox(height: 16),
@@ -283,59 +302,68 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: p.inStock
-                    ? () async {
-                        ref
-                            .read(cartProvider.notifier)
-                            .add(p.id, quantity: 1);
-                        var remoteOk = true;
-                        if (!AuthService.instance.isWholesaleCartLocalOnly) {
-                          remoteOk = await StoreCartApiService.instance
-                              .addItem(p.id, quantity: 1);
-                          if (!remoteOk) {
-                            final cart = ref.read(cartProvider);
-                            remoteOk = await StoreCartApiService.instance
-                                .syncCartToOnline(
-                              cart
-                                  .map((e) => (
-                                        productId: e.productId,
-                                        quantity: e.quantity,
-                                      ))
-                                  .toList(),
-                            );
-                          }
-                          if (remoteOk) {
-                            await ref
+            if (priceHidden && p.inStock)
+              SizedBox(
+                height: 50,
+                child: FilledButton.icon(
+                  onPressed: () => context.push(AppRoutes.login),
+                  icon: const Icon(Icons.login, size: 22),
+                  label: const Text('Sign in to view price'),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 50,
+                child: FilledButton.icon(
+                  onPressed: (p.inStock && !_isAdding)
+                      ? () async {
+                          setState(() => _isAdding = true);
+                          try {
+                            ref
                                 .read(cartProvider.notifier)
-                                .refreshFromRemote();
+                                .add(p.id, quantity: 1);
+                            var remoteOk = true;
+                            remoteOk = await StoreCartApiService.instance
+                                .addItem(p.id, quantity: 1);
+                            if (!context.mounted) return;
+                            if (remoteOk) ref.invalidate(wooCartProvider);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  remoteOk
+                                      ? 'Added ${decodeHtmlEntities(p.name)} to cart'
+                                      : 'Saved in your app cart. Cart will sync to the store when you checkout.',
+                                ),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          } finally {
+                            if (mounted) setState(() => _isAdding = false);
                           }
                         }
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              remoteOk
-                                  ? 'Added ${decodeHtmlEntities(p.name)} to cart'
-                                  : 'Saved in your app cart, but we could not sync it to the store session. For checkout, use the "Open on store website (for checkout)" button on this screen, tap "Add to cart" on the store page, and complete checkout there (shipping is filled on the store).',
-                            ),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.shopping_cart_outlined, size: 22),
-                label: Text(p.inStock ? 'Add to cart' : 'Out of Stock'),
-                style: FilledButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                      : null,
+                  icon: _isAdding
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.shopping_cart_outlined, size: 22),
+                  label: Text(
+                      p.inStock ? (_isAdding ? 'Adding...' : 'Add to cart') : 'Out of Stock'),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (p.inStock) ...[
+            if (!priceHidden && p.inStock) ...[
               const SizedBox(height: 8),
               TextButton.icon(
                 onPressed: () {
@@ -407,7 +435,47 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  Widget _buildDetailPrice(ThemeData theme, Product p, String? role) {
+  Widget _buildDetailPrice(
+      BuildContext context, ThemeData theme, Product p, String? role) {
+    final priceHidden = skuRequiresLoginToViewPrice(p.sku) &&
+        !AuthService.instance.isSignedIn;
+    if (priceHidden) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.65),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.lock_outline, color: theme.colorScheme.primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Prices for partner (P-series) products are shown after you sign in.',
+                    style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: () => context.push(AppRoutes.login),
+              icon: const Icon(Icons.login, size: 20),
+              label: const Text('Sign in to view pricing'),
+            ),
+          ],
+        ),
+      );
+    }
     final sale = p.displaySalePriceForRole(role);
     final reg = p.displayRegularPriceForRole(role);
     if (p.onSale &&
@@ -416,7 +484,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         reg > 0) {
       final pct =
           ((reg - sale) / reg * 100).round();
-      return Row(
+      return Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
         children: [
           Text(
             '${p.currency} ${sale.toStringAsFixed(2)}',
@@ -425,7 +496,6 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               color: theme.colorScheme.primary,
             ),
           ),
-          const SizedBox(width: 12),
           Text(
             '${p.currency} ${reg.toStringAsFixed(2)}',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -433,7 +503,6 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               decoration: TextDecoration.lineThrough,
             ),
           ),
-          const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -461,16 +530,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  Widget _buildDetailSidebar(BuildContext context, dynamic p) {
+  Widget _buildDetailSidebar(BuildContext context, Product p) {
     final theme = Theme.of(context);
     final hasMaterial = p.material != null && p.material!.isNotEmpty;
-    final hasInfo = p.assemblyRequired.isNotEmpty ||
-        (p.color != null && p.color!.isNotEmpty) ||
+    final showSpecs = p.age.isNotEmpty ||
         hasMaterial ||
-        (p.dimensions != null && p.dimensions!.isNotEmpty) ||
-        (p.weight != null && p.weight!.isNotEmpty);
-
-    if (!hasMaterial && !hasInfo) return const SizedBox.shrink();
+        (p.finish != null && p.finish!.isNotEmpty);
+    final rawPermalink = p.permalink?.trim();
+    final permalink = (rawPermalink != null && rawPermalink.isNotEmpty)
+        ? (rawPermalink.startsWith('/')
+            ? '${kStoreBaseUrl}$rawPermalink'
+            : rawPermalink)
+        : storeProductUrl(p.id);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -513,52 +584,64 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
           const SizedBox(height: 24),
         ],
-        if (hasInfo) ...[
+        if (showSpecs) ...[
           Text(
-            'Additional Details',
+            'Specifications',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 12),
-          if (p.assemblyRequired.isNotEmpty)
-            _modernInfoRow(context, Icons.build_outlined, 'Assembly', p.assemblyRequired),
-          if (p.color != null && p.color!.isNotEmpty)
-            _modernInfoRow(context, Icons.color_lens_outlined, 'Color', p.color!),
-          if (p.material != null && p.material!.isNotEmpty)
-            _modernInfoRow(context, Icons.forest_outlined, 'Material', p.material!),
-          if (p.dimensions != null && p.dimensions!.isNotEmpty)
-            _modernInfoRow(context, Icons.straighten_outlined, 'Dimensions', p.dimensions!),
-          if (p.weight != null && p.weight!.isNotEmpty)
-            _modernInfoRow(context, Icons.scale_outlined, 'Weight', p.weight!),
+          const SizedBox(height: 10),
+          if (p.age.isNotEmpty)
+            _detailSpecRow(theme, 'Recommended age', p.age),
+          if (hasMaterial)
+            _detailSpecRow(theme, 'Material', p.material!.trim()),
+          if (p.finish != null && p.finish!.trim().isNotEmpty)
+            _detailSpecRow(theme, 'Finish', p.finish!.trim()),
+          const SizedBox(height: 20),
         ],
+        Text(
+          'Additional Details',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: () {
+            StoreWebViewScreen.push(
+              context,
+              permalink,
+              attemptWebLogin: AuthService.instance.currentSession != null,
+            );
+          },
+          icon: const Icon(Icons.link, size: 18),
+          label: const Text('View full product details on website'),
+        ),
       ],
     );
   }
 
-  Widget _modernInfoRow(BuildContext context, IconData icon, String label, String value) {
+  Widget _detailSpecRow(ThemeData theme, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: Colors.grey.shade600),
-          const SizedBox(width: 12),
-          Text(
-            label,
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade700,
+          SizedBox(
+            width: 132,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          const SizedBox(width: 16),
           Expanded(
             child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontWeight: FontWeight.w500,
-              ),
+              decodeHtmlEntities(value),
+              style: theme.textTheme.bodyMedium,
             ),
           ),
         ],
@@ -634,7 +717,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     product.onSale &&
                     product.regularPrice != null &&
                     product.regularPrice! > 0 &&
-                    product.salePrice != null)
+                    product.salePrice != null &&
+                    !(skuRequiresLoginToViewPrice(product.sku) &&
+                        !AuthService.instance.isSignedIn))
                   Positioned(
                     top: 16,
                     left: 16,

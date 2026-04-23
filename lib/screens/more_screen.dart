@@ -21,7 +21,7 @@ String _accountRoleLabel(String role) {
   }
 }
 
-/// More tab: links to Cart, Favorites, and placeholders.
+/// More tab: links to Cart and account tools.
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
 
@@ -152,20 +152,6 @@ class MoreScreen extends StatelessWidget {
             onTap: () => context.push(AppRoutes.cart),
           ),
           ListTile(
-            leading: const Icon(Icons.favorite_border),
-            title: const Text('Favorites'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push(AppRoutes.favorites),
-          ),
-          if (session != null)
-            ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
-              title: const Text('Order history'),
-              subtitle: const Text('Orders from your store account'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push(AppRoutes.orders),
-            ),
-          ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('My account'),
             subtitle: const Text('Store account on qtoys.com.au'),
@@ -192,16 +178,21 @@ class MoreScreen extends StatelessWidget {
             onTap: () => StoreWebViewScreen.push(
               context,
               storeLostPasswordUrl,
-              attemptWebLogin: false,
+              attemptWebLogin: true,
             ),
           ),
-          ListTile(
-            leading: const Icon(Icons.app_registration_outlined),
-            title: const Text('Partner registration'),
-            subtitle: const Text('Wholesale or dropship / retail'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push(AppRoutes.register),
-          ),
+          if (session != null)
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Order history'),
+              subtitle: const Text('View and reorder past invoices'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => StoreWebViewScreen.push(
+                context,
+                '$kStoreBaseUrl/my-account/orders/',
+                attemptWebLogin: true,
+              ),
+            ),
         ],
       ),
     );

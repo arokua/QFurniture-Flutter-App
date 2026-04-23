@@ -105,11 +105,31 @@ def normalize_product(p):
     categories = normalize_categories(p.get("categories"))
     sku = p.get("sku")
 
-    # Store API: price fields can be at root or under prices (e.g. prices.price as string "48495")
+    # Store API prices are under prices.price as STRING integers in minor units
+    # e.g. prices.price = "4849" means $48.49 AUD (2 decimal places by default)
+    # currency_minor_unit tells us the exponent (default 2 = divide by 100)
     prices_obj = p.get("prices") or {}
-    price = parse_price(p.get("price") or prices_obj.get("price"))
-    regular_price = parse_price(p.get("regular_price") or prices_obj.get("regular_price"))
-    sale_price = parse_price(p.get("sale_price") or prices_obj.get("sale_price"))
+    minor_unit = int(prices_obj.get("currency_minor_unit", 2))
+    divisor = 10 ** minor_unit  # 100 for 2 decimal currencies
+
+    def parse_store_price(val):
+        """Parse Store API price value (minor unit string or float) to major unit float."""
+        if val is None:
+            return None
+        try:
+            f = float(val)
+        except (TypeError, ValueError):
+            return None
+        # Store API returns integer or integer-like string (no decimal point in minor units)
+        # If the string has no dot and value >= 10, it's minor units; divide by divisor.
+        s = str(val).strip()
+        if '.' not in s and f >= 10:
+            return round(f / divisor, 2)
+        return f
+
+    price = parse_store_price(prices_obj.get("price") or p.get("price"))
+    regular_price = parse_store_price(prices_obj.get("regular_price") or p.get("regular_price"))
+    sale_price = parse_store_price(prices_obj.get("sale_price") or p.get("sale_price"))
 
     # Stock: stock_availability.text e.g. "18 in stock", or add_to_cart.maximum
     stock_avail = p.get("stock_availability")
@@ -139,6 +159,7 @@ def normalize_product(p):
         "slug": p.get("slug"),
         "name": p.get("name") or "",
         "sku": sku or p["id"],
+        "permalink": p.get("permalink"),
 
         "description": (p.get("description") or "").strip(),
         "shortDescription": (p.get("short_description") or "").strip(),
@@ -147,7 +168,7 @@ def normalize_product(p):
         "regularPrice": regular_price,
         "salePrice": sale_price,
         "onSale": bool(p.get("on_sale", False)),
-        "currency": "AUD",
+        "currency": prices_obj.get("currency_code") or "AUD",
 
         "categories": categories,
 
@@ -170,11 +191,17 @@ def fetch_all_products():
     """Fetch all products from Store API in batches (page/per_page)."""
     all_products = []
     page = 1
-
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Encoding': 'identity',  
+        'Connection': 'keep-alive',
+    }
     while True:
         r = requests.get(
             STORE_PRODUCTS_URL,
             params={"page": page, "per_page": PER_PAGE},
+            headers=headers,
             timeout=30,
         )
         r.raise_for_status()

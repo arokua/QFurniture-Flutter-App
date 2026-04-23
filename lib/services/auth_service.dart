@@ -42,13 +42,18 @@ class AuthService extends ChangeNotifier {
     // Restore persisted session
     final isLoggedIn = _prefs!.getBool(_loggedInKey) ?? false;
     if (isLoggedIn) {
+      final token = _prefs!.getString(_tokenKey);
       _sessionController.add(UserSession(
         email: _prefs!.getString(_emailKey) ?? '',
         displayName: _prefs!.getString(_nameKey) ?? '',
         role: _prefs!.getString(_roleKey) ?? 'customers',
-        token: _prefs!.getString(_tokenKey),
+        token: token,
         customerId: _prefs!.getInt(_customerIdKey),
       ));
+      // Restore JWT to StoreCartApiService so API requests are authenticated
+      // even after an app restart (token is already persisted in prefs).
+      StoreCartApiService.instance.setJwtToken(token);
+      StoreCartApiService.setJwtFallback(token);
     } else {
       _sessionController.add(null);
       // Default: browse catalogue without partner login (retailer prices for guests).
@@ -85,8 +90,8 @@ class AuthService extends ChangeNotifier {
   /// May open the main app: real login **or** guest browse (PWA-style offline).
   bool get canAccessApp => isSignedIn || isGuestBrowse;
 
-  /// Wholesale accounts: cart stays local only (no Woo Store API sync).
-  bool get isWholesaleCartLocalOnly =>
+  /// Identifies if the signed-in user is a wholesale account.
+  bool get isWholesaleUser =>
       currentSession?.role.toLowerCase() == 'wholesale';
   bool get hasWebLoginCredentials =>
       (_lastAuthEmail != null && _lastAuthEmail!.isNotEmpty) &&
@@ -174,9 +179,44 @@ class AuthService extends ChangeNotifier {
     _sessionController.add(null);
     notifyListeners();
     // Guest cart in prefs can stay; Woo session cookie must not bleed to next user.
+    // Also clear JWT token so next session doesn't inherit old credentials.
     try {
+      StoreCartApiService.instance.setJwtToken(null);
+      StoreCartApiService.setJwtFallback(null);
       await StoreCartApiService.instance.clearSession();
+      await StoreCartApiService.instance.clearEmbeddedWebViewCookies();
     } catch (_) {}
+  }
+
+  /// Ensure signed-in session has a WooCommerce customer id.
+  /// Some JWT plugins omit it from token response; resolve lazily from Woo endpoints.
+  Future<int?> ensureCustomerIdForCurrentSession({bool force = false}) async {
+    final session = currentSession;
+    if (session == null) return null;
+    if (!force && session.customerId != null) return session.customerId;
+    final token = session.token?.trim();
+    if (token == null || token.isEmpty) return null;
+
+    try {
+      final jwtPayload = _decodeJwtPayload(token);
+      Map<String, dynamic>? customer =
+          await _fetchWooCustomerByJwt(token, jwtPayload);
+      customer ??= await _fetchWooCustomerByEmail(session.email);
+      final cid = customer?['id'];
+      final customerId = cid is int ? cid : (cid is num ? cid.toInt() : null);
+      if (customerId == null) return null;
+
+      await _persist(
+        email: session.email,
+        name: session.displayName,
+        role: session.role,
+        token: token,
+        customerId: customerId,
+      );
+      return customerId;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
@@ -198,7 +238,35 @@ class AuthService extends ChangeNotifier {
         }),
       ).timeout(const Duration(seconds: 15));
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      Map<String, dynamic>? data;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          data = decoded;
+        }
+      } catch (_) {
+        data = null;
+      }
+
+      if (data == null) {
+        final bodyHead = response.body.trimLeft();
+        final isHtml = bodyHead.startsWith('<!DOCTYPE html') ||
+            bodyHead.startsWith('<html');
+        if (kDebugMode) {
+          final snippet = response.body.length > 300
+              ? response.body.substring(0, 300)
+              : response.body;
+          debugPrint(
+            '[Auth] jwt token endpoint returned non-JSON '
+            'status=${response.statusCode} contentType=${response.headers['content-type']} '
+            'isHtml=$isHtml body=$snippet',
+          );
+        }
+        final msg = isHtml
+            ? 'Login is temporarily unavailable (store returned HTML instead of API JSON). Please try again shortly.'
+            : 'Login failed: unexpected server response.';
+        return AuthResult.failure(sanitizeAuthApiMessage(msg));
+      }
 
       if (response.statusCode == 200 && data['token'] != null) {
         final token = data['token'] as String;
@@ -306,6 +374,11 @@ class AuthService extends ChangeNotifier {
           token: token,
           customerId: customerId,
         );
+        // Allow StoreCartApiService to send JWT Bearer header, so the
+        // audit-checkout.php plugin lets authenticated requests through
+        // without requiring Cart-Token / Nonce session headers.
+        StoreCartApiService.instance.setJwtToken(token);
+        StoreCartApiService.setJwtFallback(token);
 
         return AuthResult.success(UserSession(
           email: userEmail,
@@ -511,15 +584,22 @@ class AuthService extends ChangeNotifier {
     return out;
   }
 
-  /// Authenticated WooCommerce customer (Bearer JWT). Tries `/customers/me` then `/customers/{id}`.
+  /// Look up WooCommerce customer by WP user ID extracted from JWT payload.
+  /// Uses `Authorization: Bearer <user_jwt>` against wc/v3 — the JWT plugin
+  /// authenticates the request so wp-cerber allows it through.
   Future<Map<String, dynamic>?> _fetchWooCustomerByJwt(
     String token,
     Map<String, dynamic>? jwtPayload,
   ) async {
-    final meUrl = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers/me');
+    final uid = _wpUserIdFromJwtPayload(jwtPayload);
+    if (uid == null) return null;
+
+    // wc/v3/customers/{id} authenticated with the user's own JWT Bearer.
+    // This tells wp-cerber the request comes from an authenticated WP user.
+    final idUrl = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers/$uid');
     try {
       final response = await http.get(
-        meUrl,
+        idUrl,
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json',
@@ -527,7 +607,7 @@ class AuthService extends ChangeNotifier {
       ).timeout(const Duration(seconds: 10));
       if (kDebugMode) {
         debugPrint(
-          '[Auth] WC GET ${meUrl.path} → ${response.statusCode} '
+          '[Auth] WC GET wc/v3/customers/$uid → ${response.statusCode} '
           'body=${_truncateBody(response.body)}',
         );
       }
@@ -536,33 +616,7 @@ class AuthService extends ChangeNotifier {
         if (decoded is Map<String, dynamic>) return decoded;
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('[Auth] WC customers/me error: $e');
-    }
-
-    final uid = _wpUserIdFromJwtPayload(jwtPayload);
-    if (uid != null) {
-      final idUrl = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers/$uid');
-      try {
-        final response = await http.get(
-          idUrl,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Accept': 'application/json',
-          },
-        ).timeout(const Duration(seconds: 10));
-        if (kDebugMode) {
-          debugPrint(
-            '[Auth] WC GET ${idUrl.path} → ${response.statusCode} '
-            'body=${_truncateBody(response.body)}',
-          );
-        }
-        if (response.statusCode == 200) {
-          final decoded = jsonDecode(response.body);
-          if (decoded is Map<String, dynamic>) return decoded;
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('[Auth] WC customers/{id} error: $e');
-      }
+      if (kDebugMode) debugPrint('[Auth] WC customers/$uid error: $e');
     }
     return null;
   }
@@ -654,41 +708,57 @@ class AuthService extends ChangeNotifier {
     return r;
   }
 
-  /// Look up a WooCommerce customer by email to get role + customer ID.
+  /// Look up a WooCommerce customer by email using user's JWT token.
+  /// Requires the current user's JWT to authenticate — no API key needed.
   Future<Map<String, dynamic>?> _fetchWooCustomerByEmail(String email) async {
-    if (kWooKey.isEmpty || kWooSecret.isEmpty) {
+    // Prefer the current user's session token; fall back to site-level JWT from .env.
+    final token = (jwtToken?.isNotEmpty == true ? jwtToken : null) ?? kSiteJwtToken;
+    if (token.isEmpty) {
       if (kDebugMode) {
-        debugPrint(
-          '[Auth] WC customers?email= skipped: WOO_KEY / WOO_SECRET empty in .env',
-        );
+        debugPrint('[Auth] WC customers?email= skipped: no JWT token available');
       }
       return null;
     }
-    final basicAuth = 'Basic ${base64Encode(utf8.encode('$kWooKey:$kWooSecret'))}';
-    final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers?email=$email');
 
-    final response = await http.get(
-      url,
-      headers: {'Authorization': basicAuth},
-    ).timeout(const Duration(seconds: 10));
+    // wc/v3/customers?email= authenticated with JWT Bearer.
+    final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers')
+        .replace(queryParameters: {'email': email, 'context': 'edit'});
 
-    if (kDebugMode) {
-      debugPrint(
-        '[Auth] WC GET customers?email= → ${response.statusCode} '
-        'body=${_truncateBody(response.body)}',
-      );
-    }
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
 
-    if (response.statusCode == 200) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      if (list.isNotEmpty) {
-        return list.first as Map<String, dynamic>;
+      if (kDebugMode) {
+        debugPrint(
+          '[Auth] WC GET wc/v3/customers?email= → ${response.statusCode} '
+          'body=${_truncateBody(response.body)}',
+        );
       }
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        if (body is List && body.isNotEmpty) {
+          return body.first as Map<String, dynamic>;
+        }
+        // Some setups return a single object if exactly one match
+        if (body is Map<String, dynamic> && body.containsKey('id')) {
+          return body;
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] WC customers?email= error: $e');
     }
     return null;
   }
 
-  /// Register a new WooCommerce customer.
+  /// Register a new WooCommerce customer via wc/v3/customers.
+  /// Uses the site-level JWT token from .env as Bearer auth so wp-cerber
+  /// allows the unauthenticated-user registration call through.
   Future<AuthResult> _registerWooCustomer({
     required String username,
     required String email,
@@ -699,7 +769,13 @@ class AuthService extends ChangeNotifier {
     String? abn,
     String? websiteUrl,
   }) async {
-    final basicAuth = 'Basic ${base64Encode(utf8.encode('$kWooKey:$kWooSecret'))}';
+    // Use site JWT as primary Bearer auth; add Basic Auth as secondary credential
+    // so WooCommerce validates the consumer key/secret for write access.
+    final siteJwt = kSiteJwtToken;
+    final hasKeys = kWooKey.isNotEmpty && kWooSecret.isNotEmpty;
+    final basicAuth = hasKeys
+        ? 'Basic ${base64Encode(utf8.encode('$kWooKey:$kWooSecret'))}'
+        : null;
     final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/v3/customers');
 
     // Build meta_data array for extra business fields
@@ -726,12 +802,20 @@ class AuthService extends ChangeNotifier {
         body['meta_data'] = metaData;
       }
 
+      // Build auth headers: prefer site JWT bearer; fall back to basic key/secret.
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+      if (siteJwt.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $siteJwt';
+      } else if (basicAuth != null) {
+        headers['Authorization'] = basicAuth;
+      }
+
       final response = await http.post(
         url,
-        headers: {
-          'Authorization': basicAuth,
-          'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 15));
 

@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
-import '../config/store_cart_api_service.dart';
-import '../features/cart/data/cart_provider.dart';
 import '../features/catalog/presentation/product_list_screen.dart';
-import '../services/auth_service.dart';
 import 'categories_screen.dart';
 import 'more_screen.dart';
 
@@ -19,8 +16,7 @@ class MainTabScreen extends ConsumerStatefulWidget {
   ConsumerState<MainTabScreen> createState() => _MainTabScreenState();
 }
 
-class _MainTabScreenState extends ConsumerState<MainTabScreen>
-    with WidgetsBindingObserver {
+class _MainTabScreenState extends ConsumerState<MainTabScreen> {
   late int _currentIndex;
 
   static const List<_TabItem> _tabs = [
@@ -32,28 +28,7 @@ class _MainTabScreenState extends ConsumerState<MainTabScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _currentIndex = widget.initialIndex.clamp(0, _tabs.length - 1);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _refreshCartFromStoreIfPossible();
-    }
-  }
-
-  Future<void> _refreshCartFromStoreIfPossible() async {
-    if (!StoreCartApiService.instance.hasSession) return;
-    if (AuthService.instance.isWholesaleCartLocalOnly) return;
-    await ref.read(cartProvider.notifier).refreshFromRemote();
-    ref.invalidate(storeCartFullProvider);
   }
 
   @override
