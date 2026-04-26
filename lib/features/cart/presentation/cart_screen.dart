@@ -7,8 +7,11 @@ import 'package:go_router/go_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
+import '../domain/cart_item.dart';
+import '../../catalog/domain/product.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
+import '../../../providers.dart';
 
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
@@ -105,8 +108,14 @@ class _CartScreenBody extends ConsumerWidget {
 
 
 
-    // â”€â”€ Signed-out / guest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (!isSignedIn) return _emptyScaffold(context, ref, isWholesale: false);
+    // Signed-out / guest
+    if (!isSignedIn) {
+      final localItems = ref.watch(cartProvider);
+      if (localItems.isEmpty) {
+        return _emptyScaffold(context, ref, isWholesale: false);
+      }
+      return _GuestCartScaffold(items: localItems);
+    }
 
     // â”€â”€ Authenticated store user: wooCartProvider is the single source of truth
     final wooAsync = ref.watch(wooCartProvider);
@@ -285,6 +294,185 @@ class _CartScreenBody extends ConsumerWidget {
           controller: ctrl,
           padding: const EdgeInsets.all(16),
           child: const _StoreCartDebugPanel(),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuestCartScaffold extends ConsumerWidget {
+  const _GuestCartScaffold({required this.items});
+
+  final List<CartItem> items;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repo = ref.watch(productRepoProvider);
+    final guestLinesFuture = Future.wait(
+      items.map((item) async {
+        final product = await repo.getById(item.productId);
+        return (item: item, product: product);
+      }),
+    );
+
+    return FutureBuilder<List<({CartItem item, Product? product})>>(
+      future: guestLinesFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Cart'), elevation: 0),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final lines = snapshot.data!;
+        final validLines = lines.where((line) => line.product != null).toList();
+        final total = validLines.fold<double>(
+          0,
+          (sum, line) =>
+              sum +
+              (line.product!.displayCurrentPriceForRole(null) *
+                  line.item.quantity),
+        );
+        final currency =
+            validLines.isNotEmpty ? validLines.first.product!.currency : 'AUD';
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+                'Cart (${items.length} item${items.length == 1 ? '' : 's'})'),
+            elevation: 0,
+            actions: [
+              TextButton(
+                onPressed: () => ref.read(cartProvider.notifier).clear(),
+                child: const Text('Clear All'),
+              ),
+            ],
+          ),
+          body: Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: lines.length,
+                  itemBuilder: (context, index) {
+                    final line = lines[index];
+                    final item = line.item;
+                    final product = line.product;
+                    if (product == null) {
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          title: Text('Product #${item.productId}'),
+                          subtitle: const Text('Unable to load product details'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.redAccent),
+                            onPressed: () => ref
+                                .read(cartProvider.notifier)
+                                .remove(item.productId),
+                          ),
+                        ),
+                      );
+                    }
+                    final unit = product.displayCurrentPriceForRole(null);
+                    final lineTotal = unit * item.quantity;
+                    return _CartLineCard(
+                      productId: item.productId,
+                      name: product.name,
+                      sku: product.sku,
+                      quantity: item.quantity,
+                      unitPriceDisplay:
+                          '${product.currency} ${unit.toStringAsFixed(2)}',
+                      lineTotalDisplay:
+                          '${product.currency} ${lineTotal.toStringAsFixed(2)}',
+                      imageUrl: product.primaryImage.startsWith('http')
+                          ? product.primaryImage
+                          : null,
+                      onRemove: () async {
+                        ref.read(cartProvider.notifier).remove(item.productId);
+                      },
+                      onQtyChanged: (q) async {
+                        ref.read(cartProvider.notifier).setQuantity(
+                              item.productId,
+                              q,
+                            );
+                      },
+                    );
+                  },
+                ),
+              ),
+              _GuestCartSummary(
+                totalDisplay: '$currency ${total.toStringAsFixed(2)}',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GuestCartSummary extends StatelessWidget {
+  const _GuestCartSummary({required this.totalDisplay});
+
+  final String totalDisplay;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            offset: const Offset(0, -4),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Total',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              totalDisplay,
+              textAlign: TextAlign.right,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Sign in on the website to continue checkout, or register as Wholesale / Dropship.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () => context.push(AppRoutes.login),
+              icon: const Icon(Icons.login),
+              label: const Text('Sign in'),
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: () => context.push(AppRoutes.register),
+              child: const Text('Register as Wholesale / Dropship'),
+            ),
+          ],
         ),
       ),
     );

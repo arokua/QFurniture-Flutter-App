@@ -31,6 +31,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   bool _isAdding = false;
   final PageController _pageController = PageController();
   bool _descriptionExpanded = false;
+  bool _categoriesExpanded = false;
   late Future<Product?> _productFuture;
 
   @override
@@ -188,51 +189,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         ),
         const SizedBox(height: 16),
         if (p.category.isNotEmpty || p.sku != null) ...[
-          Wrap(
-            spacing: 8,
-            children: [
-              if (p.category.isNotEmpty)
-                Chip(
-                  avatar: const Icon(Icons.category, size: 18),
-                  label: Text(decodeHtmlEntities(p.category)),
-                ),
-              if (p.sku != null)
-                Chip(
-                  avatar: const Icon(Icons.qr_code, size: 18),
-                  label: Text('SKU: ${p.sku}'),
-                ),
-              Container(
-                margin: const EdgeInsets.only(top: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: p.inStock ? Colors.green.shade50 : Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: p.inStock ? Colors.green.shade200 : Colors.red.shade200,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      p.inStock ? Icons.check_circle_outline : Icons.error_outline,
-                      size: 16,
-                      color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
-                      style: TextStyle(
-                        color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          _buildProductMetaChips(context, p),
           const SizedBox(height: 16),
         ],
         if (p.description.isNotEmpty) ...[
@@ -413,6 +370,106 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
+  Widget _buildProductMetaChips(BuildContext context, Product p) {
+    final decodedCategories = (p.categoryList.isNotEmpty
+            ? p.categoryList
+            : p.category
+                .split(',')
+                .map((category) => category.trim())
+                .where((category) => category.isNotEmpty)
+                .toList())
+        .map(decodeHtmlEntities)
+        .toList();
+    const defaultVisibleCount = 3;
+    final canExpand = decodedCategories.length > defaultVisibleCount;
+    final visibleCategories = (_categoriesExpanded || !canExpand)
+        ? decodedCategories
+        : decodedCategories.take(defaultVisibleCount).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (decodedCategories.isNotEmpty) ...[
+          Text(
+            'Categories',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final category in visibleCategories)
+                Chip(
+                  avatar: const Icon(Icons.category, size: 18),
+                  label: Text(category),
+                ),
+              if (canExpand)
+                ActionChip(
+                  avatar: Icon(
+                    _categoriesExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                  ),
+                  label: Text(
+                    _categoriesExpanded
+                        ? 'Show fewer'
+                        : 'Show all (${decodedCategories.length})',
+                  ),
+                  onPressed: () => setState(
+                    () => _categoriesExpanded = !_categoriesExpanded,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (p.sku != null)
+              Chip(
+                avatar: const Icon(Icons.qr_code, size: 18),
+                label: Text('SKU: ${p.sku}'),
+              ),
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: p.inStock ? Colors.green.shade50 : Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: p.inStock ? Colors.green.shade200 : Colors.red.shade200,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    p.inStock ? Icons.check_circle_outline : Icons.error_outline,
+                    size: 16,
+                    color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    p.stockAmount ?? (p.inStock ? 'In Stock' : 'Out of Stock'),
+                    style: TextStyle(
+                      color: p.inStock ? Colors.green.shade700 : Colors.red.shade700,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _benefitItem(BuildContext context, IconData icon, String text, Color iconColor) {
     return Expanded(
       child: Column(
@@ -533,9 +590,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   Widget _buildDetailSidebar(BuildContext context, Product p) {
     final theme = Theme.of(context);
     final hasMaterial = p.material != null && p.material!.isNotEmpty;
+    final rawFinish = p.finish?.trim();
+    final forceChemicalFreeFinish = _shouldShowChemicalFreeFinish(p);
+    final effectiveFinish =
+        forceChemicalFreeFinish ? 'Chemical-free finish' : rawFinish;
     final showSpecs = p.age.isNotEmpty ||
         hasMaterial ||
-        (p.finish != null && p.finish!.isNotEmpty);
+        (effectiveFinish != null && effectiveFinish.isNotEmpty);
     final rawPermalink = p.permalink?.trim();
     final permalink = (rawPermalink != null && rawPermalink.isNotEmpty)
         ? (rawPermalink.startsWith('/')
@@ -546,44 +607,6 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (hasMaterial) ...[
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.green.shade50,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.eco, color: Colors.green.shade700, size: 28),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${p.material} Timber Fact',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green.shade900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _materialFactBlurb(p.material!),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: Colors.green.shade800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-        ],
         if (showSpecs) ...[
           Text(
             'Specifications',
@@ -596,10 +619,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             _detailSpecRow(theme, 'Recommended age', p.age),
           if (hasMaterial)
             _detailSpecRow(theme, 'Material', p.material!.trim()),
-          if (p.finish != null && p.finish!.trim().isNotEmpty)
-            _detailSpecRow(theme, 'Finish', p.finish!.trim()),
+          if (effectiveFinish != null && effectiveFinish.isNotEmpty)
+            _detailSpecRow(theme, 'Finish', effectiveFinish),
           const SizedBox(height: 20),
         ],
+        _buildEthicalSourcingSection(context, p, effectiveFinish),
+        const SizedBox(height: 20),
         Text(
           'Additional Details',
           style: theme.textTheme.titleMedium?.copyWith(
@@ -649,18 +674,139 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  String _materialFactBlurb(String material) {
-    final m = material.toLowerCase();
-    if (m.contains('eucalyptus')) {
-      return 'Eucalyptus is a fast-growing, highly dense hardwood and a sustainable alternative to slower-growing hardwoods.';
+  Widget _buildEthicalSourcingSection(
+    BuildContext context,
+    Product p,
+    String? effectiveFinish,
+  ) {
+    final theme = Theme.of(context);
+    final materialText = (p.material != null && p.material!.trim().isNotEmpty)
+        ? p.material!.trim()
+        : 'Plantation hardwood and sustainably sourced timber';
+    final finishText = (effectiveFinish != null && effectiveFinish.isNotEmpty)
+        ? effectiveFinish
+        : 'Non-toxic, child-safe water-based coating';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE7F2EE),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Ethical Sourcing & QSAFE Guarantee',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF0E5B4C),
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isCompact = constraints.maxWidth < 560;
+              final left = _buildEthicalInfoColumn(
+                context,
+                titleA: 'Materials',
+                bodyA:
+                    '$materialText. We prioritise responsible sourcing and minimal environmental impact.',
+                titleB: 'Finish',
+                bodyB:
+                    '$finishText. Our finishes are selected for safe daily use and tactile comfort for children.',
+              );
+              final right = _buildEthicalInfoColumn(
+                context,
+                titleA: 'Safety (QSAFE)',
+                bodyA:
+                    'Every Qtoys item is tested to meet or exceed relevant Australian and international safety standards.',
+              );
+              if (isCompact) {
+                return Column(
+                  children: [
+                    left,
+                    const SizedBox(height: 12),
+                    right,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: left),
+                  const SizedBox(width: 16),
+                  Expanded(child: right),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEthicalInfoColumn(
+    BuildContext context, {
+    required String titleA,
+    required String bodyA,
+    String? titleB,
+    String? bodyB,
+  }) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$titleA:',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          bodyA,
+          style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
+        ),
+        if (titleB != null && bodyB != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            '$titleB:',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            bodyB,
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
+          ),
+        ],
+      ],
+    );
+  }
+
+  bool _shouldShowChemicalFreeFinish(Product p) {
+    final age = p.age.toLowerCase();
+    if (age.contains('0-1') || age.contains('0 to 1')) {
+      return true;
     }
-    if (m.contains('acacia')) {
-      return 'Acacia is a durable, responsibly sourced hardwood with natural resistance to insects and termites.';
-    }
-    if (m.contains('rubberwood')) {
-      return 'Rubberwood is an eco-friendly hardwood from rubber tree plantations, known for durability and even grain.';
-    }
-    return '$material is a quality timber choice for furniture.';
+    final categories = (p.categoryList.isNotEmpty
+            ? p.categoryList
+            : p.category
+                .split(',')
+                .map((category) => category.trim())
+                .where((category) => category.isNotEmpty))
+        .map((category) => category.toLowerCase())
+        .toList();
+    return categories.any(
+      (category) =>
+          category.contains('baby deluxe range') ||
+          category.contains('baby deluxe'),
+    );
   }
 
   String _detailImagePathAt(dynamic product, int index) {
