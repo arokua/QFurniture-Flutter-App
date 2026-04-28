@@ -122,7 +122,7 @@ class _CategoryNestedList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final children = category.children;
-    final name = decodeHtmlEntities(category.name);
+    final name = decodeHtmlEntities(categorySidebarLabel(category));
 
     if (children.isEmpty) {
       return ListTile(

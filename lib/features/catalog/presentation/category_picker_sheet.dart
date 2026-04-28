@@ -167,13 +167,14 @@ class _CategoryTreeNode extends StatelessWidget {
     final theme = Theme.of(context);
     final pad = 12.0 * depth;
     final children = category.children;
+    final displayName = decodeHtmlEntities(categorySidebarLabel(category));
 
     if (children.isEmpty) {
       return Padding(
         padding: EdgeInsets.only(left: pad),
         child: ListTile(
           dense: depth > 0,
-          title: Text(decodeHtmlEntities(category.name)),
+          title: Text(displayName),
           trailing: const Icon(Icons.chevron_right, size: 20),
           onTap: () => onSelect(category),
         ),
@@ -186,12 +187,12 @@ class _CategoryTreeNode extends StatelessWidget {
         data: theme.copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           key: PageStorageKey('cat_${category.id}'),
-          title: Text(decodeHtmlEntities(category.name)),
+          title: Text(displayName),
           children: [
             ListTile(
               dense: true,
               leading: Icon(Icons.layers_outlined, size: 20, color: theme.colorScheme.primary),
-              title: Text('All in ${decodeHtmlEntities(category.name)}'),
+              title: Text('All in $displayName'),
               onTap: () => onSelect(category),
             ),
             ...children.map(

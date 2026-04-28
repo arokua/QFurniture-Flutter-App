@@ -134,7 +134,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.category_outlined),
+          icon: const Icon(Icons.view_week_outlined),
           tooltip: 'Browse categories',
           onPressed: () {
             showCategoryPickerSheet(
@@ -312,7 +312,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     ref.read(refreshTriggerProvider.notifier).state++;
                   },
                   child: allProductsAsync.when(
-                    loading: () => _buildLoadingGrid(isGridView),
+                    loading: () => _buildLoadingState(),
                     error: (e, st) {
                       debugPrint('allProductsProvider error: $e\n$st');
                       return ListView(
@@ -434,26 +434,37 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     return list;
   }
 
-  Widget _buildLoadingGrid(bool isGrid) {
-    if (isGrid) {
-      return GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.68,
-          crossAxisSpacing: 14,
-          mainAxisSpacing: 14,
+  Widget _buildLoadingState() {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: const [
+        SizedBox(height: 180),
+        Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(strokeWidth: 3),
+                ),
+                SizedBox(height: 18),
+                Text(
+                  'Loading products from the server...',
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Please wait a moment. Your catalog will appear shortly.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
         ),
-        itemCount: 6,
-        itemBuilder: (_, __) => _buildProductCardShimmer(),
-      );
-    } else {
-      return ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: 6,
-        itemBuilder: (_, __) => _buildProductListItemShimmer(),
-      );
-    }
+      ],
+    );
   }
 
   Widget _buildGridView(List<Product> products, String? role) {

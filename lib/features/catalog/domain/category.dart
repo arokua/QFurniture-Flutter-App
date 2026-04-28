@@ -60,6 +60,7 @@ const allowedParentSlugs = {
   'childrens-furniture',
   'children-furniture',
   'new-arrivals',
+  'sales',
   'homewares',
   'indoor-dining',
   'toys-and-educational-resources',
@@ -67,6 +68,12 @@ const allowedParentSlugs = {
   'bundles',
   'by-age-group',
 };
+
+/// Sidebar/category-tree label override for specific slugs.
+String categorySidebarLabel(Category c) {
+  if (c.slug == 'sales') return 'Clearance Sales';
+  return c.name;
+}
 
 /// WooCommerce [menu_order]: lower first; missing order sorts last, then by name.
 int _compareCategoryOrder(Category a, Category b) {

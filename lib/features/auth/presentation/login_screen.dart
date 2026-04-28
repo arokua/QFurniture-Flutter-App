@@ -61,18 +61,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  Future<void> _handleSkip() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    // Offline-first: no JWT / network — same idea as a PWA shell using cached assets.
-    await AuthService.instance.enterGuestBrowseMode();
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    context.go(AppRoutes.home);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -162,14 +150,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: _isLoading 
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Text('Sign in'),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: _isLoading ? null : _handleSkip,
-                child: Text(
-                  'Back to catalogue',
-                  style: TextStyle(color: cs.outline, fontWeight: FontWeight.w600),
                 ),
               ),
             ],

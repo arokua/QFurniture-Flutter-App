@@ -27,6 +27,8 @@ class AuthService extends ChangeNotifier {
   static const _loggedInKey = 'qf_auth_loggedin';
   static const _tokenKey = 'qf_auth_token';
   static const _customerIdKey = 'qf_auth_customer_id';
+  static const _webLoginEmailKey = 'qf_auth_web_login_email';
+  static const _webLoginPasswordKey = 'qf_auth_web_login_password';
   /// PWA-style offline browse: use catalog/cached data without WordPress login (no network).
   static const _guestBrowseKey = 'qf_auth_guest_browse';
 
@@ -39,6 +41,8 @@ class AuthService extends ChangeNotifier {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    _lastAuthEmail = _prefs!.getString(_webLoginEmailKey);
+    _lastAuthPassword = _prefs!.getString(_webLoginPasswordKey);
     // Restore persisted session
     final isLoggedIn = _prefs!.getBool(_loggedInKey) ?? false;
     if (isLoggedIn) {
@@ -56,11 +60,6 @@ class AuthService extends ChangeNotifier {
       StoreCartApiService.setJwtFallback(token);
     } else {
       _sessionController.add(null);
-      // Default: browse catalogue without partner login (retailer prices for guests).
-      final guest = _prefs!.getBool(_guestBrowseKey) ?? false;
-      if (!guest) {
-        await _prefs!.setBool(_guestBrowseKey, true);
-      }
     }
     notifyListeners();
   }
@@ -88,7 +87,7 @@ class AuthService extends ChangeNotifier {
   bool get isGuestBrowse => _prefs?.getBool(_guestBrowseKey) ?? false;
 
   /// May open the main app: real login **or** guest browse (PWA-style offline).
-  bool get canAccessApp => isSignedIn || isGuestBrowse;
+  bool get canAccessApp => isSignedIn;
 
   /// Identifies if the signed-in user is a wholesale account.
   bool get isWholesaleUser =>
@@ -173,9 +172,11 @@ class AuthService extends ChangeNotifier {
     await _prefs?.remove(_tokenKey);
     await _prefs?.remove(_customerIdKey);
     await _prefs?.setBool(_loggedInKey, false);
-    await _prefs?.setBool(_guestBrowseKey, true);
+    await _prefs?.setBool(_guestBrowseKey, false);
     _lastAuthEmail = null;
     _lastAuthPassword = null;
+    await _prefs?.remove(_webLoginEmailKey);
+    await _prefs?.remove(_webLoginPasswordKey);
     _sessionController.add(null);
     notifyListeners();
     // Guest cart in prefs can stay; Woo session cookie must not bleed to next user.
@@ -367,6 +368,8 @@ class AuthService extends ChangeNotifier {
 
         _lastAuthEmail = email;
         _lastAuthPassword = password;
+        await _prefs?.setString(_webLoginEmailKey, email);
+        await _prefs?.setString(_webLoginPasswordKey, password);
         await _persist(
           email: userEmail,
           name: displayName,
