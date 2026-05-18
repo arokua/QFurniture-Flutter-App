@@ -86,8 +86,11 @@ class AuthService extends ChangeNotifier {
   /// Offline / guest browse (cached catalogue, no account) — persisted across restarts.
   bool get isGuestBrowse => _prefs?.getBool(_guestBrowseKey) ?? false;
 
-  /// May open the main app: real login **or** guest browse (PWA-style offline).
+  /// Full catalogue, categories tab, cart checkout, etc.
   bool get canAccessApp => isSignedIn;
+
+  /// Guest may open the catalog tab and preview the latest products (see product sync).
+  bool get canPreviewCatalog => !isSignedIn;
 
   /// Identifies if the signed-in user is a wholesale account.
   bool get isWholesaleUser =>

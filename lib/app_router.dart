@@ -32,18 +32,26 @@ final router = GoRouter(
   debugLogDiagnostics: true,
   refreshListenable: AuthService.instance,
   redirect: (ctx, state) {
-    final canAccess = AuthService.instance.canAccessApp;
-    final hasAccount = AuthService.instance.isSignedIn;
+    final signedIn = AuthService.instance.isSignedIn;
     final path = state.uri.path;
     final isSplash = path == AppRoutes.root;
-    // Login / register when not yet allowed into the app (no account and not guest browse).
-    final isPublicAuth = path == AppRoutes.login || path == AppRoutes.register;
+    final isPublicAuth =
+        path == AppRoutes.login || path == AppRoutes.register;
+    final isCatalogPreview = path == AppRoutes.home ||
+        path == AppRoutes.homeCategories ||
+        path == AppRoutes.homeMore;
+    final isProductDetail = path.startsWith('/p/');
 
     if (isSplash) return null;
-    if (!canAccess && !isPublicAuth) return AppRoutes.login;
-    // Logged-in users skip auth screens; guests may still open Login to upgrade to an account.
-    if (hasAccount && path == AppRoutes.login) return AppRoutes.home;
-    if (hasAccount && path == AppRoutes.register) return AppRoutes.home;
+
+    if (!signedIn) {
+      if (isPublicAuth) return null;
+      if (isCatalogPreview || isProductDetail) return null;
+      return AppRoutes.login;
+    }
+
+    if (path == AppRoutes.login) return AppRoutes.home;
+    if (path == AppRoutes.register) return AppRoutes.home;
     return null;
   },
   routes: [

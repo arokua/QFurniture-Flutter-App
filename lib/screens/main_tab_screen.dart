@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../features/catalog/presentation/product_list_screen.dart';
+import '../services/auth_service.dart';
 import 'categories_screen.dart';
 import 'more_screen.dart';
 
@@ -53,6 +54,10 @@ class _MainTabScreenState extends ConsumerState<MainTabScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
+          if (index != 0 && !AuthService.instance.isSignedIn) {
+            context.push(AppRoutes.login);
+            return;
+          }
           setState(() => _currentIndex = index);
           context.go(_tabs[index].route);
         },

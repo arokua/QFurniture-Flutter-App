@@ -1,25 +1,19 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_config.dart';
 import '../features/catalog/domain/role_pricing.dart';
 import '../features/catalog/utils/html_utils.dart';
+import 'auth_service.dart';
 
-/// Handles lightweight on-device sync of product metadata from the WooCommerce
-/// Store API.  Images are resolved as remote URLs (displayed via
-/// [cached_network_image]) so no local files need to be present.
+/// WooCommerce Store API product sync with phased download:
+/// 1) Latest [initialSyncBatchSize] products first (fast first paint)
+/// 2) Remaining pages in background (signed-in users only)
 ///
-/// Strategy
-/// --------
-/// 1. On first launch (or when the cache is stale) we fetch the full product
-///    list from WooCommerce and cache the JSON in SharedPreferences.
-/// 2. On subsequent launches, if the cache is fresh (< [_cacheTtlHours]) we
-///    serve from cache immediately.  A background refresh still kicks off if
-///    the cache is > [_backgroundRefreshHours] old.
-/// 3. If offline or the request fails we fall back to the bundled
-///    `assets/data/products.json`.
-class ProductSyncService {
+/// Guests may preview up to [guestPreviewProductLimit] newest products without login.
+class ProductSyncService extends ChangeNotifier {
   ProductSyncService._();
   static final ProductSyncService instance = ProductSyncService._();
 
@@ -29,131 +23,362 @@ class ProductSyncService {
   static const int _backgroundRefreshHours = 2;
   static const int _perPage = 100;
 
-  static String get _remoteEndpoint => '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
+  /// First network batch for quick startup.
+  static const int initialSyncBatchSize = 15;
+
+  /// Unauthenticated catalogue preview cap.
+  static const int guestPreviewProductLimit = 30;
+
+  static String get _remoteEndpoint =>
+      '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
+
+  bool _syncInFlight = false;
+  bool _initialBatchReady = false;
+  bool _fullCatalogReady = false;
+  bool _isLoadingInitial = false;
+  bool _isSyncingRest = false;
+  int _loadedCount = 0;
+  int? _reportedTotal;
+  String? _statusMessage;
+
+  bool get initialBatchReady => _initialBatchReady;
+  bool get fullCatalogReady => _fullCatalogReady;
+  bool get isLoadingInitial => _isLoadingInitial;
+  bool get isSyncingRest => _isSyncingRest;
+  int get loadedCount => _loadedCount;
+  int? get reportedTotal => _reportedTotal;
+  String? get statusMessage => _statusMessage;
+
+  bool get isBackgroundSyncing =>
+      _isLoadingInitial || (_isSyncingRest && !_fullCatalogReady);
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
-  /// Returns the best available product JSON list.
-  ///
-  /// Priority: fresh network → cached → bundled asset.
-  Future<List<Map<String, dynamic>>> getProducts() async {
+  /// Start phased sync after auth is known. Safe to call multiple times.
+  Future<void> ensureCatalogLoaded({bool force = false}) async {
+    if (_syncInFlight && !force) return;
     final prefs = await SharedPreferences.getInstance();
     final cachedJson = prefs.getString(_cacheKey);
     final cachedTs = prefs.getInt(_cacheTimestampKey) ?? 0;
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final ageHours = (nowMs - cachedTs) / (1000 * 3600);
+    final ageHours =
+        (DateTime.now().millisecondsSinceEpoch - cachedTs) / (1000 * 3600);
 
-    if (cachedJson != null && ageHours < _cacheTtlHours) {
-      // Serve from cache; maybe trigger background refresh
+    if (!force &&
+        cachedJson != null &&
+        ageHours < _cacheTtlHours &&
+        AuthService.instance.isSignedIn) {
+      final decoded = _decode(cachedJson);
+      _loadedCount = decoded.length;
+      _initialBatchReady = true;
+      _fullCatalogReady = true;
+      _setStatus('Catalogue ready (${decoded.length} products)');
+      notifyListeners();
       if (ageHours > _backgroundRefreshHours) {
-        _refreshInBackground(prefs);
+        _refreshFullCatalogInBackground(prefs);
       }
-      return _decode(cachedJson);
+      return;
     }
 
-    // Try to fetch fresh data
-    try {
-      final fresh = await _fetchAllRemote();
-      if (fresh.isNotEmpty) {
-        await _saveCache(prefs, fresh);
-        return fresh;
+    if (!force && cachedJson != null && !AuthService.instance.isSignedIn) {
+      final decoded = _decode(cachedJson);
+      if (decoded.isNotEmpty) {
+        _loadedCount = decoded.length.clamp(0, guestPreviewProductLimit);
+        _initialBatchReady = true;
+        _fullCatalogReady = true;
+        _setStatus('Preview catalogue ready');
+        notifyListeners();
+        return;
       }
-    } catch (_) {
-      // ignore – fall through to cached / bundled
     }
 
-    // Use stale cache if available
-    if (cachedJson != null) return _decode(cachedJson);
-
-    // Last resort: bundled asset
-    return _loadBundledAsset();
+    await _runPhasedSync(prefs, force: force);
   }
 
-  /// Force a fresh fetch from the network and update the cache.
+  /// Returns the best available product JSON list (may be partial while syncing).
+  Future<List<Map<String, dynamic>>> getProducts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedJson = prefs.getString(_cacheKey);
+
+    if (cachedJson != null) {
+      final list = _decode(cachedJson);
+      if (list.isNotEmpty) {
+        _loadedCount = list.length;
+        if (!AuthService.instance.isSignedIn) {
+          return _limitPreviewNewest(list);
+        }
+        return list;
+      }
+    }
+
+    if (!_syncInFlight) {
+      ensureCatalogLoaded().ignore();
+    }
+
+    try {
+      final bundled = await _loadBundledAsset();
+      if (bundled.isNotEmpty) {
+        if (!AuthService.instance.isSignedIn) {
+          return _limitPreviewNewest(bundled);
+        }
+        return bundled;
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
   Future<void> forceRefresh() async {
     final prefs = await SharedPreferences.getInstance();
-    try {
-      final fresh = await _fetchAllRemote();
-      if (fresh.isNotEmpty) await _saveCache(prefs, fresh);
-    } catch (_) {}
+    await prefs.remove(_cacheKey);
+    await prefs.remove(_cacheTimestampKey);
+    _initialBatchReady = false;
+    _fullCatalogReady = false;
+    await _runPhasedSync(prefs, force: true);
   }
 
-  /// Clears the on-device cache so the next [getProducts()] call fetches fresh.
   Future<void> clearCache() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_cacheKey);
     await prefs.remove(_cacheTimestampKey);
+    _initialBatchReady = false;
+    _fullCatalogReady = false;
+    _loadedCount = 0;
+    notifyListeners();
   }
 
-  // ── Private helpers ─────────────────────────────────────────────────────────
+  List<Map<String, dynamic>> _limitPreviewNewest(
+    List<Map<String, dynamic>> products,
+  ) {
+    final sorted = List<Map<String, dynamic>>.from(products);
+    sorted.sort((a, b) {
+      final da = _modifiedMs(a);
+      final db = _modifiedMs(b);
+      return db.compareTo(da);
+    });
+    if (sorted.length <= guestPreviewProductLimit) return sorted;
+    return sorted.subList(0, guestPreviewProductLimit);
+  }
 
-  static bool _backgroundRefreshScheduled = false;
+  static int _modifiedMs(Map<String, dynamic> p) {
+    final raw = p['modified']?.toString() ?? '';
+    final parsed = DateTime.tryParse(raw);
+    return parsed?.millisecondsSinceEpoch ?? 0;
+  }
 
-  void _refreshInBackground(SharedPreferences prefs) {
-    if (_backgroundRefreshScheduled) return;
-    _backgroundRefreshScheduled = true;
+  // ── Phased sync ─────────────────────────────────────────────────────────────
+
+  Future<void> _runPhasedSync(SharedPreferences prefs, {required bool force}) async {
+    if (_syncInFlight) return;
+    _syncInFlight = true;
+    _isLoadingInitial = true;
+    _isSyncingRest = false;
+    _initialBatchReady = false;
+    _fullCatalogReady = false;
+    _setStatus('Loading latest products…');
+    notifyListeners();
+
+    try {
+      final signedIn = AuthService.instance.isSignedIn;
+      final initial = await _fetchRemotePage(
+        page: 1,
+        perPage: signedIn ? initialSyncBatchSize : guestPreviewProductLimit,
+      );
+
+      if (initial.items.isNotEmpty) {
+        await _saveCache(prefs, initial.items);
+        _loadedCount = initial.items.length;
+        _reportedTotal = initial.total;
+        _initialBatchReady = true;
+        _setStatus(
+          signedIn
+              ? 'Loaded $_loadedCount products — syncing full catalogue…'
+              : 'Preview: $_loadedCount products (sign in for full catalogue)',
+        );
+        notifyListeners();
+      }
+
+      if (!signedIn) {
+        _fullCatalogReady = true;
+        _isLoadingInitial = false;
+        notifyListeners();
+        return;
+      }
+
+      _isLoadingInitial = false;
+      _isSyncingRest = true;
+      notifyListeners();
+
+      final rest = await _fetchRemainingAfterInitial(
+        prefs: prefs,
+        existing: initial.items,
+        startPage: 2,
+        totalPages: initial.totalPages,
+        total: initial.total,
+      );
+
+      if (rest.isNotEmpty) {
+        await _saveCache(prefs, rest);
+        _loadedCount = rest.length;
+      }
+      _fullCatalogReady = true;
+      _setStatus('Catalogue ready ($_loadedCount products)');
+    } catch (_) {
+      final cachedJson = prefs.getString(_cacheKey);
+      if (cachedJson != null) {
+        final list = _decode(cachedJson);
+        _loadedCount = list.length;
+        _initialBatchReady = list.isNotEmpty;
+        _fullCatalogReady = _initialBatchReady;
+        _setStatus(
+          list.isEmpty
+              ? 'Could not load catalogue — showing offline data if available'
+              : 'Showing cached catalogue ($_loadedCount products)',
+        );
+      } else {
+        final bundled = await _loadBundledAsset();
+        if (bundled.isNotEmpty) {
+          await _saveCache(prefs, bundled);
+          _loadedCount = bundled.length;
+          _initialBatchReady = true;
+          _fullCatalogReady = true;
+          _setStatus('Showing bundled catalogue');
+        }
+      }
+    } finally {
+      _isLoadingInitial = false;
+      _isSyncingRest = false;
+      _syncInFlight = false;
+      notifyListeners();
+    }
+  }
+
+  void _refreshFullCatalogInBackground(SharedPreferences prefs) {
+    if (_syncInFlight) return;
     Future.microtask(() async {
+      _syncInFlight = true;
+      _isSyncingRest = true;
+      _setStatus('Refreshing catalogue in background…');
+      notifyListeners();
       try {
-        final fresh = await _fetchAllRemote();
-        if (fresh.isNotEmpty) await _saveCache(prefs, fresh);
-      } catch (_) {}
-      _backgroundRefreshScheduled = false;
+        final all = await _fetchAllRemote();
+        if (all.isNotEmpty) {
+          await _saveCache(prefs, all);
+          _loadedCount = all.length;
+          _fullCatalogReady = true;
+          _setStatus('Catalogue updated ($_loadedCount products)');
+        }
+      } catch (_) {
+      } finally {
+        _isSyncingRest = false;
+        _syncInFlight = false;
+        notifyListeners();
+      }
     });
   }
 
-  Future<List<Map<String, dynamic>>> _fetchAllRemote() async {
-    final List<Map<String, dynamic>> all = [];
-    int page = 1;
+  Future<List<Map<String, dynamic>>> _fetchRemainingAfterInitial({
+    required SharedPreferences prefs,
+    required List<Map<String, dynamic>> existing,
+    required int startPage,
+    required int? totalPages,
+    required int? total,
+  }) async {
+    final byId = <int, Map<String, dynamic>>{};
+    for (final p in existing) {
+      final id = p['id'];
+      if (id is int) byId[id] = p;
+    }
 
-    while (true) {
-      final uri = Uri.parse(_remoteEndpoint).replace(queryParameters: {
-        'page': '$page',
-        'per_page': '$_perPage',
-      });
+    var page = startPage;
+    final maxPages = totalPages ?? 9999;
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 30));
-      if (response.statusCode != 200) break;
-
-      final List<dynamic> batch =
-          jsonDecode(response.body) as List<dynamic>;
-      if (batch.isEmpty) break;
-
-      all.addAll(batch.cast<Map<String, dynamic>>());
-
-      final totalStr = response.headers['x-wp-total'];
-      final totalPagesStr = response.headers['x-wp-totalpages'];
-      if (totalStr != null && page == 1) {
-        print('WooCommerce Store API reports $totalStr products total.');
+    while (page <= maxPages) {
+      final batch = await _fetchRemotePage(page: page, perPage: _perPage);
+      if (batch.items.isEmpty) break;
+      for (final p in batch.items) {
+        final id = p['id'];
+        if (id is int) byId[id] = p;
       }
-
-      if (totalPagesStr != null) {
-        final totalPages = int.tryParse(totalPagesStr) ?? 1;
-        if (page >= totalPages) break;
-      }
+      _loadedCount = byId.length;
+      if (total != null) _reportedTotal = total;
+      _setStatus('Syncing catalogue… $_loadedCount of ${total ?? '?'}');
+      await _saveCache(prefs, byId.values.toList());
+      notifyListeners();
+      if (page >= (batch.totalPages ?? page)) break;
       page++;
     }
 
-    print('Fetched ${all.length} products total from Store API');
-    return all.map(_normalizeRemoteProduct).toList();
+    return byId.values.toList();
   }
 
-  /// Normalise the WooCommerce Store API shape into our local product shape.
+  Future<_RemoteBatch> _fetchRemotePage({
+    required int page,
+    required int perPage,
+  }) async {
+    final uri = Uri.parse(_remoteEndpoint).replace(queryParameters: {
+      'page': '$page',
+      'per_page': '$perPage',
+      'orderby': 'date',
+      'order': 'desc',
+    });
+
+    final response = await http
+        .get(uri, headers: {'User-Agent': kAppUserAgent})
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      return const _RemoteBatch(items: [], total: null, totalPages: null);
+    }
+
+    final list = jsonDecode(response.body) as List<dynamic>;
+    final items = list
+        .cast<Map<String, dynamic>>()
+        .map(_normalizeRemoteProduct)
+        .toList();
+
+    final total = int.tryParse(response.headers['x-wp-total'] ?? '');
+    final totalPages = int.tryParse(response.headers['x-wp-totalpages'] ?? '');
+
+    return _RemoteBatch(
+      items: items,
+      total: total,
+      totalPages: totalPages,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAllRemote() async {
+    final all = <Map<String, dynamic>>[];
+    var page = 1;
+    while (true) {
+      final batch = await _fetchRemotePage(page: page, perPage: _perPage);
+      if (batch.items.isEmpty) break;
+      all.addAll(batch.items);
+      if (batch.totalPages != null && page >= batch.totalPages!) break;
+      page++;
+    }
+    return all;
+  }
+
+  void _setStatus(String message) {
+    _statusMessage = message;
+  }
+
+  // ── Normalization & cache (unchanged behaviour) ─────────────────────────────
+
   Map<String, dynamic> _normalizeRemoteProduct(Map<String, dynamic> p) {
-    // Images: extract URLs from the {id,src,...} objects
     final rawImages = (p['images'] as List? ?? []);
     final imageUrls = rawImages
-        .map((img) => img is Map ? (img['src'] ?? '').toString() : img.toString())
+        .map((img) =>
+            img is Map ? (img['src'] ?? '').toString() : img.toString())
         .where((u) => u.isNotEmpty)
         .toList();
 
-    // Categories
     final rawCats = (p['categories'] as List? ?? []);
     final cats = rawCats
         .map((c) => c is Map ? (c['name'] ?? '').toString() : c.toString())
         .where((c) => c.isNotEmpty)
         .toList();
 
-    // Price: always output dollars so cache never has cents (avoids double-divide in fromJson on refresh).
     final pricesObj = p['prices'] as Map<String, dynamic>? ?? {};
     double parseP(dynamic v) {
       if (v == null) return 0.0;
@@ -175,9 +400,9 @@ class ProductSyncService {
     final bool onSale = p['on_sale'] == true ||
         (salePrice > 0 && regularPrice > salePrice);
 
-    // Stock
     final stockAvail = p['stock_availability'];
-    final apiStockAmountText = stockAvail is Map ? stockAvail['text']?.toString() : null;
+    final apiStockAmountText =
+        stockAvail is Map ? stockAvail['text']?.toString() : null;
     final stockQuantity = p['stock_quantity'];
     String? stockAmount;
 
@@ -190,14 +415,14 @@ class ProductSyncService {
       }
     }
 
-    // Attributes
     String? material, color, assemblyRequired;
     for (final a in (p['attributes'] as List? ?? [])) {
       if (a is! Map) continue;
       final slug = (a['slug'] ?? a['taxonomy'] ?? '').toString().toLowerCase();
       final terms = a['terms'] as List? ?? [];
-      final firstVal =
-          terms.isNotEmpty && terms.first is Map ? terms.first['name']?.toString() : null;
+      final firstVal = terms.isNotEmpty && terms.first is Map
+          ? terms.first['name']?.toString()
+          : null;
       if (slug.contains('material')) material = firstVal;
       if (slug.contains('color') || slug.contains('colour')) color = firstVal;
       if (slug.contains('assembly')) assemblyRequired = firstVal;
@@ -229,8 +454,6 @@ class ProductSyncService {
       'slug': p['slug'] ?? '',
       'name': p['name'] ?? '',
       'sku': sku,
-      // Keep product permalink so the UI can open the correct product page.
-      // WC store API / WP may expose it as `permalink` (preferred) or fallbacks.
       'permalink': p['permalink'] ?? p['link'] ?? p['url'] ?? p['guid'],
       'description': (p['description'] ?? '').toString().trim(),
       'shortDescription': (p['short_description'] ?? '').toString().trim(),
@@ -242,7 +465,6 @@ class ProductSyncService {
       'currency': pricesObj['currency_code'] ?? 'AUD',
       'categories': cats,
       'category': cats.join(', '),
-      // Use remote URLs directly – displayed via cached_network_image
       'image': imageUrls.isNotEmpty ? imageUrls.first : '',
       'images': imageUrls,
       'inStock': p['is_in_stock'] ?? true,
@@ -263,8 +485,7 @@ class ProductSyncService {
     required double salePrice,
     required bool onSale,
   }) {
-    double current() =>
-        onSale && salePrice > 0 ? salePrice : price;
+    double current() => onSale && salePrice > 0 ? salePrice : price;
     double regular() => regularPrice;
     double? sale() => onSale && salePrice > 0 ? salePrice : null;
 
@@ -300,11 +521,14 @@ class ProductSyncService {
   }
 
   Future<void> _saveCache(
-      SharedPreferences prefs, List<Map<String, dynamic>> products) async {
-    final json = jsonEncode(products);
-    await prefs.setString(_cacheKey, json);
+    SharedPreferences prefs,
+    List<Map<String, dynamic>> products,
+  ) async {
+    await prefs.setString(_cacheKey, jsonEncode(products));
     await prefs.setInt(
-        _cacheTimestampKey, DateTime.now().millisecondsSinceEpoch);
+      _cacheTimestampKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   List<Map<String, dynamic>> _decode(String json) {
@@ -329,4 +553,16 @@ class ProductSyncService {
     }
     return [];
   }
+}
+
+class _RemoteBatch {
+  const _RemoteBatch({
+    required this.items,
+    required this.total,
+    required this.totalPages,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final int? total;
+  final int? totalPages;
 }

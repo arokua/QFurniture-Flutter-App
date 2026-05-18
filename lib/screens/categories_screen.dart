@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app_router.dart';
+import '../services/auth_service.dart';
 import '../features/catalog/data/category_repository.dart';
 import '../features/catalog/domain/category.dart';
 import '../features/catalog/presentation/product_list_screen.dart';
@@ -63,6 +64,37 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!AuthService.instance.isSignedIn) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Categories')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Sign in to browse categories and the full catalogue.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => context.push(AppRoutes.login),
+                  child: const Text('Sign in'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     if (_loading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),

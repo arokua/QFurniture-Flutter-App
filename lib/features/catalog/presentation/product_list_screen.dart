@@ -54,6 +54,12 @@ final refreshTriggerProvider = StateProvider<int>((ref) => 0);
 
 final allProductsProvider = FutureProvider<List<Product>>((ref) async {
   ref.watch(refreshTriggerProvider);
+  final sync = ProductSyncService.instance;
+  void onSyncUpdate() => ref.invalidateSelf();
+  sync.addListener(onSyncUpdate);
+  ref.onDispose(() => sync.removeListener(onSyncUpdate));
+
+  await sync.ensureCatalogLoaded();
   final repo = ref.watch(productRepoProvider);
   return repo.getAll();
 });
@@ -64,6 +70,13 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
   final selectedCategory = ref.watch(selectedCategoryProvider);
 
   var filtered = allProducts;
+
+  if (!AuthService.instance.isSignedIn) {
+    filtered = guestPreviewProductList(
+      filtered,
+      ProductSyncService.guestPreviewProductLimit,
+    );
+  }
 
   if (searchQuery.isNotEmpty) {
     final query = searchQuery.toLowerCase();
@@ -85,6 +98,17 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
   return filtered;
 });
 
+List<Product> _newestProducts(List<Product> products, int limit) {
+  if (products.length <= limit) return products;
+  final sorted = List<Product>.from(products);
+  sorted.sort((a, b) => b.id.compareTo(a.id));
+  return sorted.sublist(0, limit);
+}
+
+/// Newest [limit] products for guest catalogue preview.
+List<Product> guestPreviewProductList(List<Product> products, int limit) =>
+    _newestProducts(products, limit);
+
 class ProductListScreen extends ConsumerStatefulWidget {
   const ProductListScreen({super.key});
 
@@ -99,8 +123,21 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   @override
   void initState() {
     super.initState();
-    // Sync controller text from provider (in case of hot reload / restore)
     _searchController.text = ref.read(searchQueryProvider);
+    ProductSyncService.instance.ensureCatalogLoaded().ignore();
+  }
+
+  void _requireSignIn(BuildContext context, {String? message}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message ?? 'Sign in to access the full catalogue.'),
+        action: SnackBarAction(
+          label: 'Sign in',
+          onPressed: () => context.push(AppRoutes.login),
+        ),
+      ),
+    );
+    context.push(AppRoutes.login);
   }
 
   @override
@@ -137,6 +174,13 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           icon: const Icon(Icons.view_week_outlined),
           tooltip: 'Browse categories',
           onPressed: () {
+            if (!AuthService.instance.isSignedIn) {
+              _requireSignIn(
+                context,
+                message: 'Sign in to browse categories and the full catalogue.',
+              );
+              return;
+            }
             showCategoryPickerSheet(
               context,
               onSelected: (name) {
@@ -179,7 +223,13 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
               label: Text('$cartCount'),
               child: const Icon(Icons.shopping_cart_outlined),
             ),
-            onPressed: () => context.push(AppRoutes.cart),
+            onPressed: () {
+              if (!AuthService.instance.isSignedIn) {
+                _requireSignIn(context, message: 'Sign in to view your cart.');
+                return;
+              }
+              context.push(AppRoutes.cart);
+            },
             tooltip: 'Cart',
           ),
           IconButton(
@@ -192,6 +242,15 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       ),
       body: Column(
         children: [
+          ListenableBuilder(
+            listenable: Listenable.merge([
+              AuthService.instance,
+              ProductSyncService.instance,
+            ]),
+            builder: (context, _) => _CatalogStatusStrip(
+              signedIn: AuthService.instance.isSignedIn,
+            ),
+          ),
           // Search and Filter Bar
           Padding(
             padding: const EdgeInsets.all(16.0),
@@ -312,7 +371,23 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     ref.read(refreshTriggerProvider.notifier).state++;
                   },
                   child: allProductsAsync.when(
-                    loading: () => _buildLoadingState(),
+                    loading: () {
+                      final sync = ProductSyncService.instance;
+                      if (sync.initialBatchReady) {
+                        final partial = ref.watch(filteredProductsProvider);
+                        if (partial.isNotEmpty) {
+                          return _buildProductResults(
+                            context,
+                            partial,
+                            isGridView,
+                            sortOrder,
+                          );
+                        }
+                      }
+                      return _buildLoadingState(
+                        message: sync.statusMessage,
+                      );
+                    },
                     error: (e, st) {
                       debugPrint('allProductsProvider error: $e\n$st');
                       return ListView(
@@ -335,6 +410,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     },
                     data: (_) {
                       final filteredProducts = ref.watch(filteredProductsProvider);
+                      final sync = ProductSyncService.instance;
+
+                      if (filteredProducts.isEmpty &&
+                          sync.isLoadingInitial) {
+                        return _buildLoadingState(message: sync.statusMessage);
+                      }
 
                       if (filteredProducts.isEmpty) {
                         return ListView(
@@ -366,20 +447,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         );
                       }
 
-                      return ListenableBuilder(
-                        listenable: AuthService.instance,
-                        builder: (context, _) {
-                          final role =
-                              AuthService.instance.currentSession?.role;
-                          final sorted = _ProductListScreenState._sortProducts(
-                            filteredProducts,
-                            sortOrder,
-                            role,
-                          );
-                          return isGridView
-                              ? _buildGridView(sorted, role)
-                              : _buildListView(sorted, role);
-                        },
+                      return _buildProductResults(
+                        context,
+                        filteredProducts,
+                        isGridView,
+                        sortOrder,
                       );
                     },
                   ),
@@ -434,28 +506,46 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     return list;
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildProductResults(
+    BuildContext context,
+    List<Product> filteredProducts,
+    bool isGridView,
+    String sortOrder,
+  ) {
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final role = AuthService.instance.currentSession?.role;
+        final sorted = _sortProducts(filteredProducts, sortOrder, role);
+        return isGridView
+            ? _buildGridView(sorted, role)
+            : _buildListView(sorted, role);
+      },
+    );
+  }
+
+  Widget _buildLoadingState({String? message}) {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      children: const [
-        SizedBox(height: 180),
+      children: [
+        const SizedBox(height: 180),
         Center(
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
               children: [
-                SizedBox(
+                const SizedBox(
                   width: 40,
                   height: 40,
                   child: CircularProgressIndicator(strokeWidth: 3),
                 ),
-                SizedBox(height: 18),
+                const SizedBox(height: 18),
                 Text(
-                  'Loading products from the server...',
+                  message ?? 'Loading products from the server...',
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: 8),
-                Text(
+                const SizedBox(height: 8),
+                const Text(
                   'Please wait a moment. Your catalog will appear shortly.',
                   textAlign: TextAlign.center,
                 ),
@@ -1313,6 +1403,94 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Guest preview banner and subtle background-sync indicator for signed-in users.
+class _CatalogStatusStrip extends StatelessWidget {
+  const _CatalogStatusStrip({required this.signedIn});
+
+  final bool signedIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = ProductSyncService.instance;
+    final theme = Theme.of(context);
+
+    if (!signedIn) {
+      return Material(
+        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.lock_outline,
+                size: 18,
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Preview: latest ${ProductSyncService.guestPreviewProductLimit} products. '
+                  'Sign in for the full catalogue, categories, and checkout.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => context.push(AppRoutes.login),
+                child: const Text('Sign in'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!sync.isBackgroundSyncing && sync.fullCatalogReady) {
+      return const SizedBox.shrink();
+    }
+
+    final total = sync.reportedTotal;
+    final progress = total != null && total > 0
+        ? (sync.loadedCount / total).clamp(0.0, 1.0)
+        : null;
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                value: progress,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                sync.statusMessage ?? 'Syncing catalogue in the background…',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            if (total != null)
+              Text(
+                '${sync.loadedCount}/$total',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

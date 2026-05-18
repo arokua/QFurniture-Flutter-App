@@ -10,6 +10,8 @@ import '../../../providers.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/product_sync_service.dart';
+import 'product_list_screen.dart' show guestPreviewProductList;
 import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
 import '../../cart/data/woo_cart_provider.dart';
@@ -82,9 +84,62 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           );
         }
 
-        // Silent background sync removed for stability. 
-        // ProductRepository.getById already does the remote fetch.
-        
+        if (!AuthService.instance.isSignedIn) {
+          return FutureBuilder<List<Product>>(
+            future: ref.read(productRepoProvider).getAll(),
+            builder: (context, catalogSnap) {
+              if (catalogSnap.connectionState != ConnectionState.done) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final preview = guestPreviewProductList(
+                catalogSnap.data ?? const [],
+                ProductSyncService.guestPreviewProductLimit,
+              );
+              final allowed =
+                  preview.any((product) => product.id == p.id);
+              if (!allowed) {
+                return Scaffold(
+                  appBar: AppBar(),
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_outline, size: 48),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Sign in to view this product and the full catalogue.',
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 20),
+                          FilledButton(
+                            onPressed: () => context.push(AppRoutes.login),
+                            child: const Text('Sign in'),
+                          ),
+                          TextButton(
+                            onPressed: () => context.go(AppRoutes.home),
+                            child: const Text('Back to preview'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+              return _buildProductDetail(context, p);
+            },
+          );
+        }
+
+        return _buildProductDetail(context, p);
+      },
+    );
+  }
+
+  Widget _buildProductDetail(BuildContext context, Product p) {
         final decodedName = decodeHtmlEntities(p.name);
         return ListenableBuilder(
           listenable: AuthService.instance,
@@ -157,8 +212,6 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             );
           },
         );
-      },
-    );
   }
 
   Widget _buildDetailMainContent(BuildContext context, dynamic p) {

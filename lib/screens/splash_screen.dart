@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../services/product_sync_service.dart';
 
 /// Branded splash screen showing the qtoys logo (QIcon2.png).
-/// Automatically navigates to home after a short animation.
+/// Waits for the first product batch (or a short timeout) before opening the catalog.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -32,12 +33,23 @@ class _SplashScreenState extends State<SplashScreen>
     );
 
     _ctrl.forward();
+    _navigateWhenReady();
+  }
 
-    // Navigate after logo has had time to display + animate out
-    Future.delayed(const Duration(milliseconds: 2400), () {
-      if (!mounted) return;
-      context.go(AppRoutes.home);
-    });
+  Future<void> _navigateWhenReady() async {
+    final sync = ProductSyncService.instance;
+    final syncFuture = sync.ensureCatalogLoaded();
+    final minSplash = Future.delayed(const Duration(milliseconds: 1600));
+    final deadline = DateTime.now().add(const Duration(seconds: 8));
+
+    await minSplash;
+    while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 80));
+    }
+    await syncFuture.catchError((_) {});
+
+    if (!mounted) return;
+    context.go(AppRoutes.home);
   }
 
   @override
@@ -50,6 +62,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final sync = ProductSyncService.instance;
     return Scaffold(
       backgroundColor: _brandGreen,
       body: Container(
@@ -64,7 +77,6 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ── QIcon2.png logo ───────────────────────────────────────
                   ClipRRect(
                     borderRadius: BorderRadius.circular(24),
                     child: Image.asset(
@@ -75,7 +87,29 @@ class _SplashScreenState extends State<SplashScreen>
                       errorBuilder: (_, __, ___) => _buildFallback(),
                     ),
                   ),
-                  
+                  const SizedBox(height: 28),
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (sync.statusMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(
+                        sync.statusMessage!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.92),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

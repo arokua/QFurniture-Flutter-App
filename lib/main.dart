@@ -24,9 +24,8 @@ void main() async {
   // Initialise auth (Supabase / local fallback)
   await AuthService.instance.init();
 
-  // Pre-warm the product sync cache so the first load is fast.
-  // This runs async – the UI won't wait for it; products will appear once ready.
-  ProductSyncService.instance.getProducts().ignore();
+  // Phased sync: latest products first, full catalogue in background when signed in.
+  ProductSyncService.instance.ensureCatalogLoaded().ignore();
 
   runApp(const ProviderScope(
     child: CartRemoteSyncBinding(child: AppRoot()),

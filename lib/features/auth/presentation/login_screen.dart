@@ -5,6 +5,7 @@ import '../../../app_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/product_sync_service.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -55,6 +56,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         // Sync local cart to Woo Store API before any WebView pulls an empty logged-in cart.
         await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
         if (!mounted) return;
+        ProductSyncService.instance.ensureCatalogLoaded(force: true).ignore();
         context.go(AppRoutes.home);
       } else {
         setState(() => _error = result.errorMessage);
@@ -151,6 +153,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: _isLoading 
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Text('Sign in'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _isLoading ? null : () => context.go(AppRoutes.home),
+                child: Text(
+                  'Browse latest ${ProductSyncService.guestPreviewProductLimit} products',
                 ),
               ),
             ],
