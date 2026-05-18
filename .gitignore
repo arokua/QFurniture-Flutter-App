@@ -45,5 +45,9 @@ assets/images/commandlinetools-win-14742923_latest.zip
 
 .env
 /localDocs/
+<<<<<<< Updated upstream
 dist/QFurniture-Flutter-App-5e5ccc6a.ipa
+=======
+*.ipa
+>>>>>>> Stashed changes
 wordpress/qtoys-mobile-session-get-handler.php
