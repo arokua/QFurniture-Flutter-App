@@ -37,9 +37,7 @@ final router = GoRouter(
     final isSplash = path == AppRoutes.root;
     final isPublicAuth =
         path == AppRoutes.login || path == AppRoutes.register;
-    final isCatalogPreview = path == AppRoutes.home ||
-        path == AppRoutes.homeCategories ||
-        path == AppRoutes.homeMore;
+    final isCatalogPreview = path == AppRoutes.home;
     final isProductDetail = path.startsWith('/p/');
 
     if (isSplash) return null;

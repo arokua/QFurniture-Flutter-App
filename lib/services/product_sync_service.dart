@@ -208,10 +208,10 @@ class ProductSyncService extends ChangeNotifier {
       _isSyncingRest = true;
       notifyListeners();
 
+      // Re-fetch from page 1 at full page size so products 16–100 are not skipped.
       final rest = await _fetchRemainingAfterInitial(
         prefs: prefs,
         existing: initial.items,
-        startPage: 2,
         totalPages: initial.totalPages,
         total: initial.total,
       );
@@ -279,7 +279,6 @@ class ProductSyncService extends ChangeNotifier {
   Future<List<Map<String, dynamic>>> _fetchRemainingAfterInitial({
     required SharedPreferences prefs,
     required List<Map<String, dynamic>> existing,
-    required int startPage,
     required int? totalPages,
     required int? total,
   }) async {
@@ -289,7 +288,7 @@ class ProductSyncService extends ChangeNotifier {
       if (id is int) byId[id] = p;
     }
 
-    var page = startPage;
+    var page = 1;
     final maxPages = totalPages ?? 9999;
 
     while (page <= maxPages) {

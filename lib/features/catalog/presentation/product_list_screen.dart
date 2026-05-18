@@ -125,6 +125,13 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     super.initState();
     _searchController.text = ref.read(searchQueryProvider);
     ProductSyncService.instance.ensureCatalogLoaded().ignore();
+    if (!AuthService.instance.isSignedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(selectedCategoryProvider.notifier).state = null;
+        }
+      });
+    }
   }
 
   void _requireSignIn(BuildContext context, {String? message}) {

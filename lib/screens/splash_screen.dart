@@ -62,8 +62,11 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final sync = ProductSyncService.instance;
-    return Scaffold(
+    return ListenableBuilder(
+      listenable: ProductSyncService.instance,
+      builder: (context, _) {
+        final sync = ProductSyncService.instance;
+        return Scaffold(
       backgroundColor: _brandGreen,
       body: Container(
         width: double.infinity,
@@ -116,6 +119,8 @@ class _SplashScreenState extends State<SplashScreen>
           ),
         ),
       ),
+    );
+      },
     );
   }
 
