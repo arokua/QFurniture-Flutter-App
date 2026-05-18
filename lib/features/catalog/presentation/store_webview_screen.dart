@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -60,6 +61,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   final _cookieManager = WebViewCookieManager();
   bool _autoLoginSubmitted = false;
   bool _authBootstrapDone = false;
+  /// iOS/WKWebView: JWT bridge via top-level navigation (Set-Cookie) instead of fetch only.
+  bool _bridgeNavigationPending = false;
+  String? _postBridgeTargetUrl;
 
   late final List<({int productId, int quantity})> _addQueue;
   bool _addFlowStarted = false;
@@ -135,11 +139,26 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               }
 
               if (!widget.attemptWebLogin) return;
+
+              if (_bridgeNavigationPending) {
+                if (url.contains('mobile-session')) return;
+                await _completeNavigationBridge(url);
+                return;
+              }
+
               if (!_authBootstrapDone) {
                 await _bootstrapWebSession();
                 return;
               }
               if (!_autoLoginSubmitted) {
+                if (await _pageHasCaptchaChallenge()) {
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[StoreWebView] captcha on page — skip auto form submit',
+                    );
+                  }
+                  return;
+                }
                 await _submitWordPressLoginIfNeeded();
                 if (_addQueue.isNotEmpty &&
                     !_addFlowStarted &&
@@ -257,14 +276,39 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   /// Inject the StoreCartApiService session cookie into the WebView so the
   /// WooCommerce cart is shared between mobile and browser contexts.
+  String _targetAfterBridge() {
+    if (_addQueue.isNotEmpty) return '$kStoreBaseUrl/';
+    return widget.initialUrl;
+  }
+
+  /// Navigation-based JWT→cookie bridge (reliable on iOS WKWebView).
+  /// Requires GET handler on `/wp-json/qtoys/v1/mobile-session` (see wordpress/).
+  bool _startNavigationBridgeIfPossible() {
+    if (kIsWeb) return false;
+    final token = AuthService.instance.jwtToken;
+    if (token == null || token.isEmpty) return false;
+
+    _postBridgeTargetUrl = _targetAfterBridge();
+    _bridgeNavigationPending = true;
+    final bridgeUrl = buildJwtCookieBridgeLaunchUrl(
+      jwt: token,
+      redirectUrl: _postBridgeTargetUrl!,
+    );
+    if (kDebugMode) {
+      debugPrint('[StoreWebView] navigation bridge → $bridgeUrl');
+    }
+    _controller.loadRequest(Uri.parse(bridgeUrl));
+    return true;
+  }
+
   Future<void> _injectCookiesAndLoad() async {
     if (widget.attemptWebLogin) {
       // Share the app's WooCommerce session with the WebView so cart/checkout
       // sees the same lines as the Store API client.
       await _injectStoreCartCookies();
-      // JWT bridge runs on first pageFinished. Load home first so session bootstrap
-      // fires before add-to-cart queue, ensuring we are logged in before adding.
-      // For no-queue flows, load the target URL directly to avoid a redirect loop.
+      // Prefer navigation bridge on mobile (HttpOnly cookies stick in WKWebView).
+      if (_startNavigationBridgeIfPossible()) return;
+      // Fallback: load a store page, then POST bridge via JS on pageFinished.
       if (_addQueue.isNotEmpty) {
         await _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
       } else {
@@ -297,29 +341,64 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _controller.loadRequest(Uri.parse(addUrl));
   }
 
-  Future<void> _bootstrapWebSession() async {
+  Future<void> _completeNavigationBridge(String finishedUrl) async {
+    _bridgeNavigationPending = false;
     _authBootstrapDone = true;
-    final bridged = await _tryJwtCookieBridge();
-    if (bridged) {
-      _autoLoginSubmitted = true;
-      // Some backends Set-Cookie via JS fetch; give the browser a moment to
-      // attach those cookies to subsequent requests.
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      // JWT bridge sets WooCommerce cookies inside the WebView.
-      if (_addQueue.isNotEmpty) {
-        await _startAddToCartQueue();
-      } else {
-        await _controller.loadRequest(Uri.parse(widget.initialUrl));
+
+    // Allow Set-Cookie + redirect to settle (iOS needs longer than 250ms).
+    final settleMs = defaultTargetPlatform == TargetPlatform.iOS ? 800 : 400;
+    await Future<void>.delayed(Duration(milliseconds: settleMs));
+
+    var sessionOk = await _verifyWebViewSession();
+    if (!sessionOk) {
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] navigation bridge: verifying via POST fetch');
       }
+      if (await _tryJwtCookieBridge()) {
+        await Future<void>.delayed(Duration(milliseconds: settleMs));
+        sessionOk = await _verifyWebViewSession();
+      }
+    }
+
+    if (sessionOk) {
+      _autoLoginSubmitted = true;
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] WebView session verified after bridge');
+      }
+      await _continueAfterAuthBootstrap(finishedUrl);
       return;
     }
-    // Fallback: WooCommerce my-account login (not wp-login.php).
+
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreWebView] bridge did not establish session — form login fallback',
+      );
+    }
+    await _fallbackToFormLoginOrTarget();
+  }
+
+  Future<void> _continueAfterAuthBootstrap(String currentUrl) async {
+    if (_addQueue.isNotEmpty) {
+      await _startAddToCartQueue();
+      return;
+    }
+    final target = _postBridgeTargetUrl ?? widget.initialUrl;
+    final current = Uri.tryParse(currentUrl);
+    final want = Uri.tryParse(target);
+    if (current != null &&
+        want != null &&
+        current.host == want.host &&
+        _normalizePath(current.path) == _normalizePath(want.path)) {
+      return;
+    }
+    await _controller.loadRequest(Uri.parse(target));
+  }
+
+  Future<void> _fallbackToFormLoginOrTarget() async {
     if (AuthService.instance.hasWebLoginCredentials) {
       final loginUrl = storeMyAccountLoginUrl(
         accountType: AuthService.instance.webAccountTypeForStoreLogin,
       );
-      // Never force login redirect to /cart when opening checkout flow.
-      // If checkout has add-queue, queue will run and then we navigate to initialUrl.
       final redirectTo = widget.initialUrl;
       await _controller.loadRequest(
         Uri.parse(loginUrl).replace(
@@ -336,6 +415,58 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       await _startAddToCartQueue();
     } else {
       await _controller.loadRequest(Uri.parse(widget.initialUrl));
+    }
+  }
+
+  Future<void> _bootstrapWebSession() async {
+    _authBootstrapDone = true;
+    final bridged = await _tryJwtCookieBridge();
+    if (bridged && await _verifyWebViewSession()) {
+      _autoLoginSubmitted = true;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _continueAfterAuthBootstrap('');
+      return;
+    }
+    await _fallbackToFormLoginOrTarget();
+  }
+
+  /// True when WP REST sees the WebView cookie jar as logged in.
+  Future<bool> _verifyWebViewSession() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  return fetch('/wp-json/wp/v2/users/me', {
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  }).then(function(r) { return r.status === 200 ? 'ok' : 'fail_' + r.status; })
+    .catch(function() { return 'error'; });
+})()
+''');
+      final text = result.toString().replaceAll('"', '').trim();
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] users/me verify → $text');
+      }
+      return text == 'ok';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _pageHasCaptchaChallenge() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  if (document.querySelector('.cerber-form, .g-recaptcha, .h-captcha, .cf-turnstile')) return 'yes';
+  if (document.querySelector('iframe[src*="captcha"], iframe[src*="challenges.cloudflare"]')) return 'yes';
+  var t = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+  if (t.indexOf('confirm you are not a robot') >= 0 || t.indexOf('captcha') >= 0) return 'maybe';
+  return 'no';
+})()
+''');
+      final text = result.toString().replaceAll('"', '').trim();
+      return text == 'yes' || text == 'maybe';
+    } catch (_) {
+      return false;
     }
   }
 

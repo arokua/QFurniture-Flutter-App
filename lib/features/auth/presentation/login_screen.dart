@@ -29,7 +29,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _handleLogin() async {
     if (_isLoading) return;
     final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+    // Do not trim passwords — spaces can be intentional.
+    final password = _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
       setState(() => _error = 'Please enter both email and password.');

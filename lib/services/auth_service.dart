@@ -232,7 +232,11 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': kAppUserAgent,
+        },
         body: jsonEncode({
           'username': email,
           'password': password,

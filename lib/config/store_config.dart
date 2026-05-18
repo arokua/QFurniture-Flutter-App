@@ -3,6 +3,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 /// Store (WooCommerce) base URL. Must match fetch_woocommerce_products.py BASE_URL.
 String get kStoreBaseUrl => dotenv.env['STORE_BASE_URL'] ?? 'https://qtoys.com.au';
 
+/// Sent on JWT login and Store API calls so WAF/Cerber can allowlist the app.
+const String kAppUserAgent = 'QToysApp/1.0';
+
 /// WooCommerce API credentials (optional, read from .env)
 String get kWooKey => dotenv.env['WOO_KEY'] ?? '';
 String get kWooSecret => dotenv.env['WOO_SECRET'] ?? '';
