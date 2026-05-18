@@ -1,0 +1,17 @@
+{
+  "project": "QFurniture-Flutter-App",
+  "platform": "ios",
+  "github": {
+    "owner": "arokua",
+    "repo": "QFurniture-Flutter-App"
+  },
+  "ios": {
+    "path": "ios"
+  },
+  "flutter": {
+    "version": "3.41.6",
+    "watch": {}
+  },
+  "reactNative": {},
+  "mobai": {}
+}

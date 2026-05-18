@@ -1,12 +1,13 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/auth_service.dart';
 import 'store_config.dart';
 
-/// Opens the store (WooCommerce) in the browser: add-to-cart, cart, or checkout.
+/// Opens the store (WooCommerce) in the browser: add_to_cart, cart, or checkout.
 /// The store/WordPress DB will receive the order when the user completes checkout on the site.
 class StoreLinkService {
-  /// Open store add-to-cart URL for one product. Store cart is updated; order is in WordPress when user checks out.
+  /// Open store add_to_cart URL for one product. Store cart is updated; order is in WordPress when user checks out.
   static Future<bool> openAddToCart(int productId, {int quantity = 1}) async {
     final url = storeAddToCartUrl(productId, quantity: quantity);
     return _launch(url);
@@ -18,6 +19,10 @@ class StoreLinkService {
   /// Open store checkout page (user must have added items on store or we open cart).
   static Future<bool> openCheckout() async => _launch(storeCheckoutUrl);
 
+  /// Opens the product page in the store website (permalink via WordPress redirect).
+  static Future<bool> openProduct(int productId) =>
+      _launch(storeProductUrl(productId));
+
   /// Open URL that adds the first cart item to the store, then user can add more or go to checkout on the site.
   static Future<bool> openAddCartToStore(
       List<({int productId, int quantity})> items) async {
@@ -26,18 +31,58 @@ class StoreLinkService {
     return _launch(url);
   }
 
-  static Future<bool> _launch(String url) async {
-    final uri = Uri.parse(url);
+  /// Opens any store URL in the **system browser** (Chrome / Safari).
+  /// When the user is logged in with a JWT, uses [buildJwtCookieBridgeLaunchUrl] so the
+  /// server can set cookies before redirect (same intent as WebView POST bridge).
+  static Future<bool> openUrl(String url) => _launch(url);
+
+  static String _urlWithSessionIfNeeded(String targetUrl) {
+    if (!kUseJwtBridgeForExternalBrowser) return targetUrl;
+    final jwt = AuthService.instance.jwtToken;
+    if (jwt == null || jwt.isEmpty) return targetUrl;
+    try {
+      final u = Uri.parse(targetUrl);
+      final store = Uri.parse(kStoreBaseUrl);
+      if (u.host != store.host) return targetUrl;
+      if (u.path.contains('lost-password')) return targetUrl;
+    } catch (_) {
+      return targetUrl;
+    }
+    return buildJwtCookieBridgeLaunchUrl(jwt: jwt, redirectUrl: targetUrl);
+  }
+
+  static String _normalizeToAbsoluteStoreUrl(String targetUrl) {
+    try {
+      final u = Uri.parse(targetUrl);
+      if (u.isAbsolute) return targetUrl;
+      // If it's a store path like `/product/...`, prefix the base URL.
+      if (targetUrl.startsWith('/')) return '$kStoreBaseUrl$targetUrl';
+      return targetUrl;
+    } catch (_) {
+      return targetUrl;
+    }
+  }
+
+  static Future<bool> _launch(String targetUrl) async {
+    final normalized = _normalizeToAbsoluteStoreUrl(targetUrl);
+    final resolved = _urlWithSessionIfNeeded(normalized);
+    final uri = Uri.parse(resolved);
     try {
       if (kIsWeb) {
         return launchUrl(uri, webOnlyWindowName: '_blank');
       }
-      // On mobile: open in in-app WebView so store session/cookies are preserved (same context).
-      final inApp = await launchUrl(uri, mode: LaunchMode.inAppWebView);
-      if (inApp) return true;
-      return launchUrl(uri, mode: LaunchMode.inAppWebView);
+      if (kDebugMode) {
+        debugPrint('[StoreLink] opening: $uri');
+      }
+      // Prefer the device default browser — avoids a separate in-app session vs the app cart.
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (ok) return true;
+      return launchUrl(uri, mode: LaunchMode.platformDefault);
     } catch (_) {
       return false;
     }
   }
+
+  /// WooCommerce lost password on the storefront (`/my-account/lost-password/`).
+  static Future<bool> openPasswordReset() async => _launch(storeLostPasswordUrl);
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../features/catalog/presentation/product_list_screen.dart';
@@ -6,22 +7,22 @@ import 'categories_screen.dart';
 import 'more_screen.dart';
 
 /// Main shell with bottom tabs: Catalog, Categories, More.
-class MainTabScreen extends StatefulWidget {
+class MainTabScreen extends ConsumerStatefulWidget {
   const MainTabScreen({super.key, this.initialIndex = 0});
 
   final int initialIndex;
 
   @override
-  State<MainTabScreen> createState() => _MainTabScreenState();
+  ConsumerState<MainTabScreen> createState() => _MainTabScreenState();
 }
 
-class _MainTabScreenState extends State<MainTabScreen> {
+class _MainTabScreenState extends ConsumerState<MainTabScreen> {
   late int _currentIndex;
 
   static const List<_TabItem> _tabs = [
     _TabItem(label: 'Catalog', icon: Icons.grid_view, route: AppRoutes.home),
-    _TabItem(label: 'Categories', icon: Icons.category, route: AppRoutes.homeCategories),
-    _TabItem(label: 'More', icon: Icons.more_horiz, route: AppRoutes.homeMore),
+    _TabItem(label: 'Categories', icon: Icons.view_week_outlined, route: AppRoutes.homeCategories),
+    _TabItem(label: 'Profile', icon: Icons.more_horiz, route: AppRoutes.homeMore),
   ];
 
   @override

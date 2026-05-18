@@ -1,13 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../config/store_config.dart';
+import '../features/catalog/presentation/store_webview_screen.dart';
+import '../services/auth_service.dart';
 
-/// More tab: links to Cart, Favorites, and placeholders.
+String _accountRoleLabel(String role) {
+  switch (role.toLowerCase()) {
+    case 'customers':
+    case 'customer':
+      return 'CUSTOMER';
+    case 'wholesale':
+      return 'WHOLESALE';
+    case 'dropshipping':
+      return 'DROPSHIP / RETAIL';
+    case 'retailer':
+      return 'RETAILER';
+    default:
+      return role.toUpperCase();
+  }
+}
+
+/// More tab: links to Cart and account tools.
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final session = AuthService.instance.currentSession;
+    final guestBrowse = AuthService.instance.isGuestBrowse;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('More'),
@@ -15,6 +39,112 @@ class MoreScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // User Profile Section
+          if (guestBrowse && session == null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Card(
+                elevation: 0,
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.storefront_outlined, color: cs.primary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Browsing the catalogue',
+                              style: theme.textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Prices shown are retail reference. Partners can sign in for trade pricing and account tools.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: cs.onSurface.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonal(
+                        onPressed: () => context.go(AppRoutes.login),
+                        child: const Text('Partner sign in'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (session != null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Card(
+                elevation: 0,
+                color: cs.primaryContainer.withValues(alpha: 0.3),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundColor: cs.primary,
+                        child: Text(
+                          session.displayName.isNotEmpty ? session.displayName[0].toUpperCase() : 'U',
+                          style: TextStyle(color: cs.onPrimary, fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              session.displayName,
+                              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: cs.secondary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                _accountRoleLabel(session.role),
+                                style: TextStyle(color: cs.onSecondary, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Text(
+                              session.email,
+                              style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.6)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.logout),
+                        onPressed: () async {
+                          await AuthService.instance.signOut();
+                          if (context.mounted) {
+                            context.go(AppRoutes.home);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.shopping_cart_outlined),
             title: const Text('Cart'),
@@ -22,27 +152,47 @@ class MoreScreen extends StatelessWidget {
             onTap: () => context.push(AppRoutes.cart),
           ),
           ListTile(
-            leading: const Icon(Icons.favorite_border),
-            title: const Text('Favorites'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push(AppRoutes.favorites),
-          ),
-          ListTile(
-            leading: const Icon(Icons.settings_outlined),
-            title: const Text('Settings'),
+            leading: const Icon(Icons.person_outline),
+            title: const Text('My account'),
+            subtitle: const Text('Store account on qtoys.com.au'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text('Settings coming soon'),
-                  duration: const Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
+              final session = AuthService.instance.currentSession;
+              final url = session != null
+                  ? storeMyAccountUrl
+                  : storeMyAccountLoginUrl(
+                      accountType:
+                          AuthService.instance.webAccountTypeForStoreLogin,
+                    );
+              StoreWebViewScreen.push(
+                context,
+                url,
+                attemptWebLogin: session != null,
               );
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.lock_reset_outlined),
+            title: const Text('Reset password'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => StoreWebViewScreen.push(
+              context,
+              storeLostPasswordUrl,
+              attemptWebLogin: true,
+            ),
+          ),
+          if (session != null)
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Order history'),
+              subtitle: const Text('View and reorder past invoices'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => StoreWebViewScreen.push(
+                context,
+                '$kStoreBaseUrl/my-account/orders/',
+                attemptWebLogin: true,
+              ),
+            ),
         ],
       ),
     );

@@ -1,3 +1,17 @@
+/// Remove HTML tags (e.g. `<span>Out of stock</span>`) for plain display/search.
+String stripHtmlTags(String text) {
+  if (text.isEmpty) return text;
+  return text.replaceAll(RegExp(r'<[^>]*>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+/// Stock / availability strings from WooCommerce may include HTML; normalize for UI.
+String? normalizeStockDisplay(String? raw) {
+  if (raw == null) return null;
+  final stripped = stripHtmlTags(raw);
+  if (stripped.isEmpty) return null;
+  return decodeHtmlEntities(stripped).trim();
+}
+
 /// Decode common HTML entities so text displays correctly (e.g. &amp; -> &).
 String decodeHtmlEntities(String text) {
   if (text.isEmpty) return text;

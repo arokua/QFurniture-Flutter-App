@@ -23,7 +23,7 @@ class Category {
       name: _decodeHtmlEntities(j['name'] as String? ?? ''),
       slug: j['slug'] as String? ?? '',
       parent: j['parent'] is int ? j['parent'] as int : int.tryParse(j['parent'].toString()) ?? 0,
-      menuOrder: j['menu_order'] as int?,
+      menuOrder: _parseOptionalInt(j['menu_order']),
     );
   }
 
@@ -33,6 +33,13 @@ class Category {
         .replaceAll('&#8217;', "'")
         .replaceAll('&amp;', '&')
         .replaceAll('&nbsp;', ' ');
+  }
+
+  static int? _parseOptionalInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is String) return int.tryParse(v);
+    return int.tryParse(v.toString());
   }
 
   Category copyWith({List<Category>? children}) {
@@ -47,15 +54,35 @@ class Category {
   }
 }
 
-/// Allowed parent slugs for main nav (same as reference).
+/// Allowed parent slugs for top-level categories (legacy + Qtoys catalogue).
 const allowedParentSlugs = {
   'outdoor-furniture',
   'childrens-furniture',
   'children-furniture',
   'new-arrivals',
+  'sales',
   'homewares',
   'indoor-dining',
+  'toys-and-educational-resources',
+  'furniture-and-preschool-equipment',
+  'bundles',
+  'by-age-group',
 };
+
+/// Sidebar/category-tree label override for specific slugs.
+String categorySidebarLabel(Category c) {
+  if (c.slug == 'sales') return 'Clearance Sales';
+  return c.name;
+}
+
+/// WooCommerce [menu_order]: lower first; missing order sorts last, then by name.
+int _compareCategoryOrder(Category a, Category b) {
+  const maxOrder = 999999;
+  final ao = a.menuOrder ?? maxOrder;
+  final bo = b.menuOrder ?? maxOrder;
+  if (ao != bo) return ao.compareTo(bo);
+  return a.name.compareTo(b.name);
+}
 
 List<Category> buildCategoryTree(List<Category> flat) {
   final map = <int, Category>{};
@@ -75,9 +102,23 @@ List<Category> buildCategoryTree(List<Category> flat) {
   }
   for (final r in map.values) {
     if (r.children.isNotEmpty) {
-      r.children.sort((a, b) => a.name.compareTo(b.name));
+      r.children.sort(_compareCategoryOrder);
     }
   }
-  roots.sort((a, b) => a.name.compareTo(b.name));
+  roots.sort(_compareCategoryOrder);
+  sortRootsByAgeGroupLast(roots);
   return roots;
+}
+
+/// Puts the "By Age Group" root category last (main nav order).
+void sortRootsByAgeGroupLast(List<Category> roots) {
+  final idx = roots.indexWhere(
+    (c) =>
+        c.slug == 'by-age-group' ||
+        c.name.toLowerCase().contains('by age group'),
+  );
+  if (idx != -1 && idx < roots.length - 1) {
+    final item = roots.removeAt(idx);
+    roots.add(item);
+  }
 }

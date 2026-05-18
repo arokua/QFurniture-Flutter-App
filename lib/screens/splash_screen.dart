@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 
-/// Branded splash screen showing the QFurniture logo (QIcon2.png).
+/// Branded splash screen showing the qtoys logo (QIcon2.png).
 /// Automatically navigates to home after a short animation.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -46,25 +46,16 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  static const _brandGreen = Color(0xFF8BC34A);
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: cs.surface,
+      backgroundColor: _brandGreen,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        // Subtle warm gradient matching the brand brown palette
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              const Color(0xFF5D4037), // darker brown
-              const Color(0xFF795548), // brand brown
-            ],
-          ),
-        ),
+        color: _brandGreen,
         child: Center(
           child: FadeTransition(
             opacity: _fade,
@@ -81,29 +72,10 @@ class _SplashScreenState extends State<SplashScreen>
                       width: 180,
                       height: 180,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => _buildFallback(cs),
+                      errorBuilder: (_, __, ___) => _buildFallback(),
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  // ── Brand name ────────────────────────────────────────────
-                  Text(
-                    'QFurniture',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Quality you can feel',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.75),
-                      fontSize: 14,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+                  
                 ],
               ),
             ),
@@ -113,7 +85,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildFallback(ColorScheme cs) {
+  Widget _buildFallback() {
     return Container(
       width: 180,
       height: 180,

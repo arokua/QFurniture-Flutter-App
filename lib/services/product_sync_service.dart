@@ -3,6 +3,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_config.dart';
+import '../features/catalog/domain/role_pricing.dart';
+import '../features/catalog/utils/html_utils.dart';
 
 /// Handles lightweight on-device sync of product metadata from the WooCommerce
 /// Store API.  Images are resolved as remote URLs (displayed via
@@ -27,8 +29,7 @@ class ProductSyncService {
   static const int _backgroundRefreshHours = 2;
   static const int _perPage = 100;
 
-  static const String _remoteEndpoint =
-      '$kStoreBaseUrl/wp-json/wc/store/v1/products';
+  static String get _remoteEndpoint => '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -171,6 +172,8 @@ class ProductSyncService {
     final regularPrice =
         parseP(p['regular_price'] ?? pricesObj['regular_price']);
     final salePrice = parseP(p['sale_price'] ?? pricesObj['sale_price']);
+    final bool onSale = p['on_sale'] == true ||
+        (salePrice > 0 && regularPrice > salePrice);
 
     // Stock
     final stockAvail = p['stock_availability'];
@@ -179,7 +182,7 @@ class ProductSyncService {
     String? stockAmount;
 
     if (apiStockAmountText != null && apiStockAmountText.trim().isNotEmpty) {
-      stockAmount = apiStockAmountText.trim();
+      stockAmount = normalizeStockDisplay(apiStockAmountText.trim());
     } else if (stockQuantity != null) {
       final quantity = int.tryParse(stockQuantity.toString());
       if (quantity != null && quantity > 0) {
@@ -200,17 +203,42 @@ class ProductSyncService {
       if (slug.contains('assembly')) assemblyRequired = firstVal;
     }
 
+    String sku = (p['sku'] ?? '').toString().trim();
+    if (sku.isEmpty) {
+      for (final m in (p['meta_data'] as List? ?? [])) {
+        if (m is! Map) continue;
+        final key = m['key']?.toString().toLowerCase() ?? '';
+        if (key == 'sku' || key == '_sku') {
+          final v = m['value'];
+          sku = v?.toString().trim() ?? '';
+          if (sku.isNotEmpty) break;
+        }
+      }
+    }
+    if (sku.isEmpty) sku = '${p['id']}';
+
+    final rolePrices = _rolePricesSnapshot(
+      price: price,
+      regularPrice: regularPrice,
+      salePrice: salePrice,
+      onSale: onSale,
+    );
+
     return {
       'id': p['id'],
       'slug': p['slug'] ?? '',
       'name': p['name'] ?? '',
-      'sku': p['sku'] ?? '${p['id']}',
+      'sku': sku,
+      // Keep product permalink so the UI can open the correct product page.
+      // WC store API / WP may expose it as `permalink` (preferred) or fallbacks.
+      'permalink': p['permalink'] ?? p['link'] ?? p['url'] ?? p['guid'],
       'description': (p['description'] ?? '').toString().trim(),
       'shortDescription': (p['short_description'] ?? '').toString().trim(),
       'price': price,
       'regularPrice': regularPrice,
       'salePrice': salePrice,
-      'onSale': p['on_sale'] ?? false,
+      'onSale': onSale,
+      'rolePrices': rolePrices,
       'currency': pricesObj['currency_code'] ?? 'AUD',
       'categories': cats,
       'category': cats.join(', '),
@@ -226,6 +254,35 @@ class ProductSyncService {
       'dimensions': _formatDimensions(p['dimensions']),
       'variants': p['variations'] ?? [],
       'modified': p['date_modified_gmt'],
+    };
+  }
+
+  static Map<String, dynamic> _rolePricesSnapshot({
+    required double price,
+    required double regularPrice,
+    required double salePrice,
+    required bool onSale,
+  }) {
+    double current() =>
+        onSale && salePrice > 0 ? salePrice : price;
+    double regular() => regularPrice;
+    double? sale() => onSale && salePrice > 0 ? salePrice : null;
+
+    Map<String, double> tier(double m) {
+      final map = <String, double>{
+        'price': RolePricing.roundMoney(current() * m),
+        'regularPrice': RolePricing.roundMoney(regular() * m),
+      };
+      final s = sale();
+      if (s != null) map['salePrice'] = RolePricing.roundMoney(s * m);
+      return map;
+    }
+
+    return {
+      'retailer': tier(1.0),
+      'wholesale': tier(0.5),
+      'dropship': tier(0.55),
+      'admin': tier(0.75),
     };
   }
 

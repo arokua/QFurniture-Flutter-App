@@ -1,4 +1,6 @@
 import '../utils/html_utils.dart';
+import 'product_pricing_policy.dart';
+import 'role_pricing.dart';
 
 class Variant {
   final String sku;
@@ -10,6 +12,9 @@ class Variant {
       required this.label,
       required this.price,
       required this.inStock});
+
+  double priceForRole(String? role) =>
+      RolePricing.roundMoney(price * RolePricing.multiplierFor(role));
 
   factory Variant.fromJson(Map<String, dynamic> j) {
     // Variations in Store API also use a 'prices' object
@@ -43,11 +48,11 @@ class Variant {
 
 /// Main catalogue categories used for filtering (same as elsewhere in the app).
 const List<String> kMainCategories = [
+  'Toys and Educational Resources',
+  'Furniture and Preschool Equipment',
   'Homewares',
-  'Outdoor Furniture',
-  'Indoor Dining',
   'New Arrivals',
-  'Children\'s Furniture',
+  'By Age Group',
 ];
 
 class Product {
@@ -60,6 +65,7 @@ class Product {
   final String currency;
   final String image;
   final List<String> images; // Multiple images for gallery
+  final String? permalink; // Product permalink from WC Store API
   final bool inStock;
   final String? stockAmount; // e.g. "18 in stock"
   final String category;
@@ -71,6 +77,7 @@ class Product {
   final List<Variant> variants;
   // Additional info (detail screen)
   final String? material; // pa_material
+  final String? finish; // pa_finish (e.g. sealant)
   final String assemblyRequired; // "Yes" / "No" (Homewares → No, else Yes)
   final String? color;
   final String? weight;
@@ -86,6 +93,7 @@ class Product {
     required this.currency,
     required this.image,
     required this.images,
+    this.permalink,
     required this.inStock,
     this.stockAmount,
     required this.category,
@@ -95,6 +103,7 @@ class Product {
     this.sku,
     required this.variants,
     this.material,
+    this.finish,
     this.assemblyRequired = 'Yes',
     this.color,
     this.weight,
@@ -118,17 +127,23 @@ class Product {
       double? d;
       if (v is num) {
         d = v.toDouble();
-        // Only divide by 100 when value looks like cents (integer >= 100). Already-in-dollars (e.g. from sync) must not be divided again.
-        if (d >= 100 && d == d.truncateToDouble()) return d / 100;
+        // Values from products.json are already in dollars (pre-converted by fetch script).
+        // Only divide by 100 when the value looks like a raw minor-unit integer from a
+        // *live* Store API response: large whole number (>= 100, no fractional part).
+        // A real dollar price of e.g. $100.00 would come from JSON as 100.0, not 10000.
+        // Threshold: values >= 1000 and whole = almost certainly minor units (cents).
+        if (d >= 1000 && d == d.truncateToDouble()) return d / 100;
         return d;
       }
       if (v is String) {
-        d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), ''));
-        if (d == null) return 0.0;
-        // If string looks like a large raw number (no dot or .00) it's likely cents
-        if (d >= 100 && (!v.contains('.') || v.endsWith('.0') || v.endsWith('.00'))) {
-          return d / 100;
+        // If the string contains a dot, it's already a dollar amount.
+        if (v.contains('.')) {
+          return double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
         }
+        d = double.tryParse(v.replaceAll(RegExp(r'[^\d]'), ''));
+        if (d == null) return 0.0;
+        // String with no dot and value >= 1000 = raw minor units (cents from live Store API).
+        if (d >= 1000) return d / 100;
         return d;
       }
       return 0.0;
@@ -191,18 +206,24 @@ class Product {
     String? apiMaterial;
     String? apiColor;
     String? apiAssembly;
+    String? apiFinish;
+    String? apiAgeTerms;
     final attrs = j['attributes'] as List?;
     if (attrs != null) {
       for (final a in attrs) {
         if (a is Map) {
-          final slug = a['slug']?.toString().toLowerCase() ?? '';
+          final taxonomy = (a['taxonomy'] ?? a['slug'] ?? '')
+              .toString()
+              .toLowerCase();
           final terms = a['terms'] as List?;
           final firstTerm = (terms != null && terms.isNotEmpty) ? terms.first : null;
           final value = (firstTerm is Map) ? firstTerm['name']?.toString() : null;
-          
-          if (slug == 'pa_material') apiMaterial = value;
-          if (slug == 'pa_color') apiColor = value;
-          if (slug == 'pa_assembly_required') apiAssembly = value;
+
+          if (taxonomy == 'pa_material') apiMaterial = value;
+          if (taxonomy == 'pa_color') apiColor = value;
+          if (taxonomy == 'pa_assembly_required') apiAssembly = value;
+          if (taxonomy == 'pa_finish') apiFinish = value;
+          if (taxonomy == 'pa_age') apiAgeTerms = value;
         }
       }
     }
@@ -254,11 +275,23 @@ class Product {
         .any((c) => c.toLowerCase().contains("children"));
     if (isChildren && material == null) material = 'Rubberwood';
 
-    // Stock mapping for Store API
+    // Stock mapping for Store API (may include HTML in stockAmount from WC)
     final bool apiInStock = j['is_in_stock'] ?? (j['stock_status'] == 'instock');
     final apiStockAmount = j['stock_quantity']?.toString();
+    final String? rawStock = (j['stockAmount'] as String? ?? '').trim().isNotEmpty
+        ? (j['stockAmount'] as String? ?? '').trim()
+        : (apiStockAmount != null ? '$apiStockAmount in stock' : null);
+    final String? stockNormalized = normalizeStockDisplay(rawStock);
 
-    return Product(
+    // WC Store API often includes a `permalink` field; use it so UI opens
+    // the correct product page instead of relying on `?p=ID`.
+    final String? permalinkVal =
+        (j['permalink'] ?? j['link'] ?? j['url'])?.toString();
+    final String? permalink = permalinkVal?.trim().isNotEmpty == true
+        ? decodeHtmlEntities(permalinkVal!)
+        : null;
+
+    final built = Product(
       id: id,
       name: decodeHtmlEntities(j['name'] as String? ?? ''),
       price: price,
@@ -268,17 +301,27 @@ class Product {
       currency: currency,
       image: imageStr,
       images: imagesParsed,
+      permalink: permalink,
       inStock: j['inStock'] ?? apiInStock,
-      stockAmount: (j['stockAmount'] as String? ?? '').trim().isNotEmpty
-          ? (j['stockAmount'] as String? ?? '').trim()
-          : (apiStockAmount != null ? "$apiStockAmount in stock" : null),
+      stockAmount: stockNormalized,
       category: category,
       categoryList: categoryList,
-      age: decodeHtmlEntities(j['age'] as String? ?? ''),
+      age: () {
+        final fromJson =
+            decodeHtmlEntities(j['age'] as String? ?? '').trim();
+        if (fromJson.isNotEmpty) return fromJson;
+        if (apiAgeTerms != null && apiAgeTerms.trim().isNotEmpty) {
+          return decodeHtmlEntities(apiAgeTerms.trim());
+        }
+        return '';
+      }(),
       description: decodeHtmlEntities(j['description'] as String? ?? j['short_description'] as String? ?? ''),
       sku: skuResolved,
       variants: variantsParsed,
       material: material,
+      finish: (apiFinish ?? '').trim().isEmpty
+          ? null
+          : decodeHtmlEntities(apiFinish!.trim()),
       assemblyRequired: assemblyRequired,
       color: (j['color'] as String? ?? apiColor ?? '').trim().isEmpty
           ? null
@@ -290,6 +333,7 @@ class Product {
           ? null
           : (j['dimensions'] as String? ?? '').trim(),
     );
+    return _applyBackupPricingIfApplicable(built);
   }
 
   /// First main category (Homewares, Children's Furniture, Outdoor Furniture) that appears in this product, or first category, or "Other".
@@ -310,4 +354,68 @@ class Product {
   /// Main image only – used in list/grid. Sub images are in [images] for detail screen.
   String get primaryImage =>
       image.isNotEmpty ? image : (images.isNotEmpty ? images.first : "");
+
+  /// First number in [stockAmount] (e.g. `"5 in stock"`); null when not parseable.
+  int? get parsedStockQuantityApprox {
+    if (!inStock) return 0;
+    final s = stockAmount?.trim();
+    if (s == null || s.isEmpty) return null;
+    final m = RegExp(r'\d+').firstMatch(s);
+    if (m == null) return null;
+    return int.tryParse(m.group(0)!);
+  }
+
+  /// Retailer reference from WooCommerce; scaled by [RolePricing] for the session role.
+  double displayCurrentPriceForRole(String? role) {
+    final m = RolePricing.multiplierFor(role);
+    if (onSale && salePrice != null) {
+      return RolePricing.roundMoney(salePrice! * m);
+    }
+    return RolePricing.roundMoney(price * m);
+  }
+
+  double? displayRegularPriceForRole(String? role) {
+    if (regularPrice == null) return null;
+    return RolePricing.roundMoney(regularPrice! * RolePricing.multiplierFor(role));
+  }
+
+  double? displaySalePriceForRole(String? role) {
+    if (!onSale || salePrice == null) return null;
+    return RolePricing.roundMoney(salePrice! * RolePricing.multiplierFor(role));
+  }
+}
+
+/// Web store backup list price + 10% off sale for known `P00x` furniture SKUs.
+Product _applyBackupPricingIfApplicable(Product p) {
+  final key = p.sku?.trim().toUpperCase();
+  if (key == null || key.isEmpty) return p;
+  final reg = kBackupRegularPriceAudBySku[key];
+  if (reg == null) return p;
+  final sale = RolePricing.roundMoney(reg * 0.9);
+  return Product(
+    id: p.id,
+    name: p.name,
+    price: sale,
+    regularPrice: reg,
+    salePrice: sale,
+    onSale: true,
+    currency: p.currency,
+    image: p.image,
+    images: p.images,
+    permalink: p.permalink,
+    inStock: p.inStock,
+    stockAmount: p.stockAmount,
+    category: p.category,
+    categoryList: p.categoryList,
+    age: p.age,
+    description: p.description,
+    sku: p.sku,
+    variants: p.variants,
+    material: p.material,
+    finish: p.finish,
+    assemblyRequired: p.assemblyRequired,
+    color: p.color,
+    weight: p.weight,
+    dimensions: p.dimensions,
+  );
 }

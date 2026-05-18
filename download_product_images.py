@@ -62,7 +62,7 @@ def extension_from_url(url: str) -> str:
 def download_once(url: str, out_path: Path, retries: int = 2) -> bool:
     if out_path.exists():
         return True
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 QFurniture/1.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 qtoys/1.0"}
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, headers=headers)

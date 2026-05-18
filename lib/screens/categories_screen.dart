@@ -6,6 +6,8 @@ import '../app_router.dart';
 import '../features/catalog/data/category_repository.dart';
 import '../features/catalog/domain/category.dart';
 import '../features/catalog/presentation/product_list_screen.dart';
+import '../utils/user_facing_errors.dart';
+import '../features/catalog/utils/html_utils.dart';
 
 /// Categories tab: fetch from Store API, build tree (parent/children), display.
 /// Tap category -> filter catalog and switch to Catalog tab.
@@ -41,10 +43,11 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
           _loading = false;
         });
       }
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('Categories load error: $e\n$st');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = userFacingCatalogError(e);
           _loading = false;
         });
       }
@@ -96,11 +99,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         itemCount: _roots.length,
         itemBuilder: (context, index) {
           final parent = _roots[index];
-          return _CategoryTile(
+          return _CategoryNestedList(
             category: parent,
-            onTap: () => _onCategoryTap(context, parent),
-            children: parent.children,
-            onChildTap: (child) => _onCategoryTap(context, child),
+            onSelect: (c) => _onCategoryTap(context, c),
           );
         },
       ),
@@ -108,60 +109,48 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   }
 }
 
-class _CategoryTile extends StatefulWidget {
-  const _CategoryTile({
+/// Recursive tree: expand for children; tap leaf or "All in …" to filter the catalog.
+class _CategoryNestedList extends StatelessWidget {
+  const _CategoryNestedList({
     required this.category,
-    required this.onTap,
-    required this.children,
-    required this.onChildTap,
+    required this.onSelect,
   });
 
   final Category category;
-  final VoidCallback onTap;
-  final List<Category> children;
-  final void Function(Category) onChildTap;
-
-  @override
-  State<_CategoryTile> createState() => _CategoryTileState();
-}
-
-class _CategoryTileState extends State<_CategoryTile> {
-  bool _expanded = false;
+  final void Function(Category) onSelect;
 
   @override
   Widget build(BuildContext context) {
-    final hasChildren = widget.children.isNotEmpty;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ListTile(
-          title: Text(widget.category.name),
-          trailing: hasChildren
-              ? Icon(_expanded ? Icons.expand_less : Icons.expand_more)
-              : const Icon(Icons.chevron_right, size: 20),
-          onTap: () {
-            if (hasChildren) {
-              if (_expanded) {
-                widget.onTap(); // Already expanded, now filter
-              } else {
-                setState(() => _expanded = true); // Just expand
-              }
-            } else {
-              widget.onTap(); // No children, filter immediately
-            }
-          },
-        ),
-        if (hasChildren && _expanded)
-          ...widget.children.map(
-            (child) => Padding(
-              padding: const EdgeInsets.only(left: 24),
-              child: ListTile(
-                title: Text(child.name),
-                onTap: () => widget.onChildTap(child),
-              ),
+    final children = category.children;
+    final name = decodeHtmlEntities(categorySidebarLabel(category));
+
+    if (children.isEmpty) {
+      return ListTile(
+        title: Text(name),
+        trailing: const Icon(Icons.chevron_right, size: 20),
+        onTap: () => onSelect(category),
+      );
+    }
+
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        key: PageStorageKey('tab_cat_${category.id}'),
+        title: Text(name),
+        children: [
+          ListTile(
+            leading: Icon(Icons.layers_outlined, size: 20, color: Theme.of(context).colorScheme.primary),
+            title: Text('All in $name'),
+            onTap: () => onSelect(category),
+          ),
+          ...children.map(
+            (c) => Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: _CategoryNestedList(category: c, onSelect: onSelect),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
