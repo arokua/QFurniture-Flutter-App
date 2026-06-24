@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../services/auth_service.dart';
 import '../services/product_sync_service.dart';
 
 /// Branded splash screen showing the qtoys logo (QIcon2.png).
@@ -37,16 +38,34 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigateWhenReady() async {
-    final sync = ProductSyncService.instance;
-    final syncFuture = sync.ensureCatalogLoaded();
-    final minSplash = Future.delayed(const Duration(milliseconds: 1600));
-    final deadline = DateTime.now().add(const Duration(seconds: 8));
+    final auth = AuthService.instance;
+    // Minimum splash time so the logo doesn't flicker.
+    await Future.delayed(const Duration(milliseconds: 1400));
 
-    await minSplash;
-    while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 80));
+    // Hard lock: no stored session → login first and foremost.
+    if (!auth.isSignedIn) {
+      if (!mounted) return;
+      context.go(AppRoutes.login);
+      return;
     }
-    await syncFuture.catchError((_) {});
+
+    // Validate/refresh the JWT. Fixes the "after 7 days, invalid token" lockout:
+    // expired tokens are refreshed (or a silent re-login is attempted); only if
+    // everything fails do we drop the user back to the login screen.
+    final sessionOk = await auth.ensureValidSession();
+    if (!mounted) return;
+    if (!sessionOk) {
+      context.go(AppRoutes.login);
+      return;
+    }
+
+    // Signed in: start the phased catalogue sync and wait briefly for batch 1.
+    final sync = ProductSyncService.instance;
+    sync.ensureCatalogLoaded().ignore();
+    final deadline = DateTime.now().add(const Duration(seconds: 6));
+    while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
 
     if (!mounted) return;
     context.go(AppRoutes.home);

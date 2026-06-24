@@ -84,7 +84,10 @@ int _compareCategoryOrder(Category a, Category b) {
   return a.name.compareTo(b.name);
 }
 
-List<Category> buildCategoryTree(List<Category> flat) {
+List<Category> buildCategoryTree(
+  List<Category> flat, {
+  bool allowedRootsOnly = true,
+}) {
   final map = <int, Category>{};
   for (final c in flat) {
     map[c.id] = c.copyWith(children: []);
@@ -98,7 +101,10 @@ List<Category> buildCategoryTree(List<Category> flat) {
   }
   final roots = <Category>[];
   for (final c in flat) {
-    if (c.parent == 0) roots.add(map[c.id]!);
+    if (c.parent != 0) continue;
+    if (allowedRootsOnly && !allowedParentSlugs.contains(c.slug)) continue;
+    final node = map[c.id];
+    if (node != null) roots.add(node);
   }
   for (final r in map.values) {
     if (r.children.isNotEmpty) {

@@ -151,18 +151,13 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
                 return;
               }
               if (!_autoLoginSubmitted) {
-                if (await _pageHasCaptchaChallenge()) {
-                  if (kDebugMode) {
-                    debugPrint(
-                      '[StoreWebView] captcha on page — skip auto form submit',
-                    );
-                  }
-                  return;
-                }
-                await _submitWordPressLoginIfNeeded();
-                if (_addQueue.isNotEmpty &&
-                    !_addFlowStarted &&
-                    _autoLoginSubmitted) {
+                // We deliberately do NOT auto-submit the wp-login form here:
+                // that path hits the Cerber captcha and blocks the user. The
+                // cookie bridge (one-time code / JWT) is the only auto-login
+                // mechanism. If it didn't establish a session, just continue to
+                // the target page so the user can act manually.
+                _autoLoginSubmitted = true;
+                if (!_addFlowStarted && _addQueue.isNotEmpty) {
                   await _startAddToCartQueue();
                 }
                 return;
@@ -283,31 +278,50 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   /// Navigation-based JWT→cookie bridge (reliable on iOS WKWebView).
   /// Requires GET handler on `/wp-json/qtoys/v1/mobile-session` (see wordpress/).
-  bool _startNavigationBridgeIfPossible() {
+  ///
+  /// Prefers a one-time `code` (minted by the app over Bearer auth) so the JWT
+  /// never appears in the URL/server logs and the wp-login form (Cerber
+  /// captcha) is never shown. Falls back to `?token=` if minting fails.
+  Future<bool> _startNavigationBridgeIfPossible() async {
     if (kIsWeb) return false;
     final token = AuthService.instance.jwtToken;
     if (token == null || token.isEmpty) return false;
 
     _postBridgeTargetUrl = _targetAfterBridge();
     _bridgeNavigationPending = true;
-    final bridgeUrl = buildJwtCookieBridgeLaunchUrl(
-      jwt: token,
-      redirectUrl: _postBridgeTargetUrl!,
-    );
-    if (kDebugMode) {
-      debugPrint('[StoreWebView] navigation bridge → $bridgeUrl');
+
+    final code = await AuthService.instance.mintWebSessionCode();
+    final String bridgeUrl;
+    if (code != null && code.isNotEmpty) {
+      bridgeUrl = buildWebSessionCodeLaunchUrl(
+        code: code,
+        redirectUrl: _postBridgeTargetUrl!,
+      );
+    } else {
+      bridgeUrl = buildJwtCookieBridgeLaunchUrl(
+        jwt: token,
+        redirectUrl: _postBridgeTargetUrl!,
+      );
     }
-    _controller.loadRequest(Uri.parse(bridgeUrl));
+    if (kDebugMode) {
+      debugPrint(
+        '[StoreWebView] navigation bridge (${code != null ? 'code' : 'token'}) → $bridgeUrl',
+      );
+    }
+    await _controller.loadRequest(Uri.parse(bridgeUrl));
     return true;
   }
 
   Future<void> _injectCookiesAndLoad() async {
     if (widget.attemptWebLogin) {
+      // Make sure the JWT is fresh before we hand it to the cookie bridge —
+      // an expired token would make the bridge fail and force the captcha form.
+      await AuthService.instance.ensureValidSession();
       // Share the app's WooCommerce session with the WebView so cart/checkout
       // sees the same lines as the Store API client.
       await _injectStoreCartCookies();
       // Prefer navigation bridge on mobile (HttpOnly cookies stick in WKWebView).
-      if (_startNavigationBridgeIfPossible()) return;
+      if (await _startNavigationBridgeIfPossible()) return;
       // Fallback: load a store page, then POST bridge via JS on pageFinished.
       if (_addQueue.isNotEmpty) {
         await _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
@@ -394,23 +408,12 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _controller.loadRequest(Uri.parse(target));
   }
 
+  /// Bridge failed to establish a web session. We do NOT navigate to the
+  /// wp-login form (it triggers the Cerber captcha and blocks the user). Just
+  /// load the requested page; the user stays able to browse/checkout and the
+  /// cart cookies that were injected may still apply.
   Future<void> _fallbackToFormLoginOrTarget() async {
-    if (AuthService.instance.hasWebLoginCredentials) {
-      final loginUrl = storeMyAccountLoginUrl(
-        accountType: AuthService.instance.webAccountTypeForStoreLogin,
-      );
-      final redirectTo = widget.initialUrl;
-      await _controller.loadRequest(
-        Uri.parse(loginUrl).replace(
-          queryParameters: {
-            ...Uri.parse(loginUrl).queryParameters,
-            'redirect_to': redirectTo,
-          },
-        ),
-      );
-      _autoLoginSubmitted = false;
-      return;
-    }
+    _autoLoginSubmitted = true;
     if (_addQueue.isNotEmpty) {
       await _startAddToCartQueue();
     } else {
@@ -452,24 +455,6 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     }
   }
 
-  Future<bool> _pageHasCaptchaChallenge() async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult('''
-(function() {
-  if (document.querySelector('.cerber-form, .g-recaptcha, .h-captcha, .cf-turnstile')) return 'yes';
-  if (document.querySelector('iframe[src*="captcha"], iframe[src*="challenges.cloudflare"]')) return 'yes';
-  var t = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
-  if (t.indexOf('confirm you are not a robot') >= 0 || t.indexOf('captcha') >= 0) return 'maybe';
-  return 'no';
-})()
-''');
-      final text = result.toString().replaceAll('"', '').trim();
-      return text == 'yes' || text == 'maybe';
-    } catch (_) {
-      return false;
-    }
-  }
-
   Future<bool> _tryJwtCookieBridge() async {
     final token = AuthService.instance.jwtToken;
     if (token == null || token.isEmpty) return false;
@@ -503,39 +488,6 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       .replaceAll("'", r"\'")
       .replaceAll('\n', r'\n')
       .replaceAll('\r', '');
-
-  Future<void> _submitWordPressLoginIfNeeded() async {
-    if (_autoLoginSubmitted) return;
-    final email = AuthService.instance.webLoginEmail;
-    final password = AuthService.instance.webLoginPassword;
-    if (email == null || password == null) return;
-    final js = '''
-(function() {
-  var f = document.querySelector('form.woocommerce-form-login');
-  if (!f) f = document.querySelector('form[action*="login"]');
-  var u = document.querySelector('#username') || (f && f.querySelector('input[name="username"]'));
-  var p = document.querySelector('#password') || (f && f.querySelector('input[name="password"]'));
-  if (!u || !p || !f) return 'no-login-form';
-  u.value = '${_escapeJs(email)}';
-  p.value = '${_escapeJs(password)}';
-  f.submit();
-  return 'submitted';
-})();
-''';
-    try {
-      final result = await _controller.runJavaScriptReturningResult(js);
-      var text = result.toString().trim();
-      if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
-        text = text.substring(1, text.length - 1);
-      }
-      if (text != 'submitted') {
-        return;
-      }
-      _autoLoginSubmitted = true;
-    } catch (e) {
-      debugPrint('WebView auto-login submit error: $e');
-    }
-  }
 
   /// Read cookies back from the WebView via JavaScript and update
   /// StoreCartApiService so the mobile app has the latest session.

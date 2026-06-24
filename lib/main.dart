@@ -21,11 +21,14 @@ void main() async {
   // Initialise cart session (cookie-based WooCommerce cart)
   await StoreCartApiService.instance.init();
 
-  // Initialise auth (Supabase / local fallback)
+  // Initialise auth (restores persisted JWT session if present).
   await AuthService.instance.init();
 
-  // Phased sync: latest products first, full catalogue in background when signed in.
-  ProductSyncService.instance.ensureCatalogLoaded().ignore();
+  // Phased sync only makes sense once we have a session (hard lock). The splash
+  // screen validates/refreshes the token, then kicks off the catalogue sync.
+  if (AuthService.instance.isSignedIn) {
+    ProductSyncService.instance.ensureCatalogLoaded().ignore();
+  }
 
   runApp(const ProviderScope(
     child: CartRemoteSyncBinding(child: AppRoot()),

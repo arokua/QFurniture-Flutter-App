@@ -12,6 +12,8 @@ import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/product_sync_service.dart';
 import 'product_list_screen.dart' show guestPreviewProductList;
+import 'category_navigation.dart';
+import 'widgets/low_stock_badge.dart';
 import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
 import '../../cart/data/woo_cart_provider.dart';
@@ -455,9 +457,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             runSpacing: 8,
             children: [
               for (final category in visibleCategories)
-                Chip(
+                ActionChip(
                   avatar: const Icon(Icons.category, size: 18),
                   label: Text(category),
+                  onPressed: () => openCatalogWithCategory(
+                    ref,
+                    context,
+                    categoryName: category,
+                  ),
                 ),
               if (canExpand)
                 ActionChip(
@@ -514,6 +521,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       fontSize: 13,
                     ),
                   ),
+                  if (p.isLowStock) ...[
+                    const SizedBox(width: 8),
+                    const LowStockBadge(showLabel: true),
+                  ],
                 ],
               ),
             ),
@@ -642,6 +653,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   Widget _buildDetailSidebar(BuildContext context, Product p) {
     final theme = Theme.of(context);
+    final decodedCategories = (p.categoryList.isNotEmpty
+            ? p.categoryList
+            : p.category
+                .split(',')
+                .map((c) => c.trim())
+                .where((c) => c.isNotEmpty)
+                .toList())
+        .map(decodeHtmlEntities)
+        .toList();
     final hasMaterial = p.material != null && p.material!.isNotEmpty;
     final rawFinish = p.finish?.trim();
     final forceChemicalFreeFinish = _shouldShowChemicalFreeFinish(p);
@@ -660,6 +680,34 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (decodedCategories.isNotEmpty) ...[
+          Text(
+            'Categories',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...decodedCategories.map(
+            (name) => ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.category_outlined,
+                size: 20,
+                color: theme.colorScheme.primary,
+              ),
+              title: Text(name),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () => openCatalogWithCategory(
+                ref,
+                context,
+                categoryName: name,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (showSpecs) ...[
           Text(
             'Specifications',

@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../data/category_repository.dart';
 import '../domain/category.dart';
-import '../utils/html_utils.dart';
+import 'widgets/category_tree_tile.dart';
 
-/// Full-screen modal category tree: tap a category to apply the filter [onSelected(name)].
+/// Full-screen modal category tree: tap a category to apply the filter [onSelected].
 Future<void> showCategoryPickerSheet(
   BuildContext context, {
-  required void Function(String? categoryName) onSelected,
+  required void Function(Category? category) onSelected,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -38,7 +38,7 @@ class _CategoryPickerBody extends StatefulWidget {
   });
 
   final ScrollController scrollController;
-  final void Function(String? categoryName) onSelected;
+  final void Function(Category? category) onSelected;
 
   @override
   State<_CategoryPickerBody> createState() => _CategoryPickerBodyState();
@@ -80,7 +80,7 @@ class _CategoryPickerBodyState extends State<_CategoryPickerBody> {
   }
 
   void _pick(Category c) {
-    widget.onSelected(c.name);
+    widget.onSelected(c);
     Navigator.of(context).pop();
   }
 
@@ -137,9 +137,8 @@ class _CategoryPickerBodyState extends State<_CategoryPickerBody> {
             padding: const EdgeInsets.only(bottom: 24),
             children: _roots
                 .map(
-                  (c) => _CategoryTreeNode(
+                  (c) => CategoryTreeTile(
                     category: c,
-                    depth: 0,
                     onSelect: _pick,
                   ),
                 )
@@ -147,64 +146,6 @@ class _CategoryPickerBodyState extends State<_CategoryPickerBody> {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _CategoryTreeNode extends StatelessWidget {
-  const _CategoryTreeNode({
-    required this.category,
-    required this.depth,
-    required this.onSelect,
-  });
-
-  final Category category;
-  final int depth;
-  final void Function(Category) onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final pad = 12.0 * depth;
-    final children = category.children;
-    final displayName = decodeHtmlEntities(categorySidebarLabel(category));
-
-    if (children.isEmpty) {
-      return Padding(
-        padding: EdgeInsets.only(left: pad),
-        child: ListTile(
-          dense: depth > 0,
-          title: Text(displayName),
-          trailing: const Icon(Icons.chevron_right, size: 20),
-          onTap: () => onSelect(category),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: EdgeInsets.only(left: pad),
-      child: Theme(
-        data: theme.copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          key: PageStorageKey('cat_${category.id}'),
-          title: Text(displayName),
-          children: [
-            ListTile(
-              dense: true,
-              leading: Icon(Icons.layers_outlined, size: 20, color: theme.colorScheme.primary),
-              title: Text('All in $displayName'),
-              onTap: () => onSelect(category),
-            ),
-            ...children.map(
-              (c) => _CategoryTreeNode(
-                category: c,
-                depth: depth + 1,
-                onSelect: onSelect,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

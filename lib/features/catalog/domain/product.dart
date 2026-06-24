@@ -2,6 +2,9 @@ import '../utils/html_utils.dart';
 import 'product_pricing_policy.dart';
 import 'role_pricing.dart';
 
+/// Products with this many units or fewer (but > 0) show the low-stock badge.
+const int kLowStockThreshold = 5;
+
 class Variant {
   final String sku;
   final String label;
@@ -355,7 +358,6 @@ class Product {
   String get primaryImage =>
       image.isNotEmpty ? image : (images.isNotEmpty ? images.first : "");
 
-  /// First number in [stockAmount] (e.g. `"5 in stock"`); null when not parseable.
   int? get parsedStockQuantityApprox {
     if (!inStock) return 0;
     final s = stockAmount?.trim();
@@ -363,6 +365,23 @@ class Product {
     final m = RegExp(r'\d+').firstMatch(s);
     if (m == null) return null;
     return int.tryParse(m.group(0)!);
+  }
+
+  /// In stock with a known small quantity, or stock text mentions low stock.
+  bool get isLowStock {
+    if (!inStock) return false;
+    final qty = parsedStockQuantityApprox;
+    if (qty != null) {
+      return qty > 0 && qty <= kLowStockThreshold;
+    }
+    final lower = stockAmount?.toLowerCase() ?? '';
+    return lower.contains('low stock') || lower.contains('only');
+  }
+
+  /// Sort key: higher = more stock. Out-of-stock sorts last.
+  int get stockSortKey {
+    if (!inStock) return -1;
+    return parsedStockQuantityApprox ?? 999999;
   }
 
   /// Retailer reference from WooCommerce; scaled by [RolePricing] for the session role.

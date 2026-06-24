@@ -6,7 +6,9 @@ import '../app_router.dart';
 import '../services/auth_service.dart';
 import '../features/catalog/data/category_repository.dart';
 import '../features/catalog/domain/category.dart';
-import '../features/catalog/presentation/product_list_screen.dart';
+import '../features/catalog/domain/category_filter.dart';
+import '../features/catalog/providers/category_providers.dart';
+import '../features/catalog/presentation/widgets/category_tree_tile.dart';
 import '../utils/user_facing_errors.dart';
 import '../features/catalog/utils/html_utils.dart';
 
@@ -56,9 +58,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   }
 
   void _onCategoryTap(BuildContext context, Category category) {
-    ProviderScope.containerOf(context)
-        .read(selectedCategoryProvider.notifier)
-        .state = category.name;
+    final container = ProviderScope.containerOf(context);
+    container.read(selectedCategoryProvider.notifier).state =
+        SelectedCategory(id: category.id, name: category.name);
     context.go(AppRoutes.home);
   }
 
@@ -131,57 +133,11 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         itemCount: _roots.length,
         itemBuilder: (context, index) {
           final parent = _roots[index];
-          return _CategoryNestedList(
+          return CategoryTreeTile(
             category: parent,
             onSelect: (c) => _onCategoryTap(context, c),
           );
         },
-      ),
-    );
-  }
-}
-
-/// Recursive tree: expand for children; tap leaf or "All in …" to filter the catalog.
-class _CategoryNestedList extends StatelessWidget {
-  const _CategoryNestedList({
-    required this.category,
-    required this.onSelect,
-  });
-
-  final Category category;
-  final void Function(Category) onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final children = category.children;
-    final name = decodeHtmlEntities(categorySidebarLabel(category));
-
-    if (children.isEmpty) {
-      return ListTile(
-        title: Text(name),
-        trailing: const Icon(Icons.chevron_right, size: 20),
-        onTap: () => onSelect(category),
-      );
-    }
-
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        key: PageStorageKey('tab_cat_${category.id}'),
-        title: Text(name),
-        children: [
-          ListTile(
-            leading: Icon(Icons.layers_outlined, size: 20, color: Theme.of(context).colorScheme.primary),
-            title: Text('All in $name'),
-            onTap: () => onSelect(category),
-          ),
-          ...children.map(
-            (c) => Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: _CategoryNestedList(category: c, onSelect: onSelect),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -29,6 +30,8 @@ class AuthService extends ChangeNotifier {
   static const _customerIdKey = 'qf_auth_customer_id';
   static const _webLoginEmailKey = 'qf_auth_web_login_email';
   static const _webLoginPasswordKey = 'qf_auth_web_login_password';
+  static const _refreshTokenKey = 'qf_auth_refresh_token';
+  static const _deviceIdKey = 'qf_auth_device_id';
   /// PWA-style offline browse: use catalog/cached data without WordPress login (no network).
   static const _guestBrowseKey = 'qf_auth_guest_browse';
 
@@ -180,6 +183,7 @@ class AuthService extends ChangeNotifier {
     _lastAuthPassword = null;
     await _prefs?.remove(_webLoginEmailKey);
     await _prefs?.remove(_webLoginPasswordKey);
+    await _prefs?.remove(_refreshTokenKey);
     _sessionController.add(null);
     notifyListeners();
     // Guest cart in prefs can stay; Woo session cookie must not bleed to next user.
@@ -219,6 +223,177 @@ class AuthService extends ChangeNotifier {
       );
       return customerId;
     } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Session validity / token refresh ───────────────────────────────────────
+
+  bool _ensureSessionInFlight = false;
+
+  /// Ensures the stored JWT is still usable, recovering transparently when it
+  /// is not. Order of recovery:
+  ///   1. Validate the current access token (`jwt-auth/v1/token/validate`).
+  ///   2. Exchange the stored refresh token for a new access token.
+  ///   3. Silently re-login with the stored credentials.
+  ///   4. Give up → sign out (caller routes to the login screen).
+  ///
+  /// This fixes the "after ~7 days the JWT is invalid and users can't log in"
+  /// problem: the access token is short-lived, so we refresh/re-auth instead of
+  /// treating the stored session as permanently valid.
+  Future<bool> ensureValidSession() async {
+    if (!isSignedIn) return false;
+    if (_ensureSessionInFlight) return isSignedIn;
+    _ensureSessionInFlight = true;
+    try {
+      final token = jwtToken;
+      if (token != null && token.isNotEmpty) {
+        final status = await _validateToken(token);
+        if (status == true) return true;
+        // Server unreachable (null) → keep the session optimistically; on-demand
+        // API calls will retry. Never sign out on a transient network error.
+        if (status == null) return true;
+      }
+      // status == false → the server definitively rejected the token (reachable),
+      // so try to recover a fresh one.
+      if (await _refreshAccessToken()) return true;
+      if (hasWebLoginCredentials) {
+        final res = await _loginWordPress(
+          email: _lastAuthEmail!,
+          password: _lastAuthPassword!,
+        );
+        if (res.isSuccess) return true;
+      }
+      await signOut();
+      return false;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] ensureValidSession error: $e');
+      // Keep whatever session we have rather than logging out on a transient
+      // network error; API calls will retry/refresh on demand.
+      return isSignedIn;
+    } finally {
+      _ensureSessionInFlight = false;
+    }
+  }
+
+  /// Returns true (valid), false (server rejected the token), or null (server
+  /// unreachable / network error — caller should keep the session).
+  Future<bool?> _validateToken(String token) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$kStoreBaseUrl/wp-json/jwt-auth/v1/token/validate'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'User-Agent': kAppUserAgent,
+        },
+      ).timeout(const Duration(seconds: 12));
+      if (resp.statusCode == 200) return true;
+      // 401/403 → definitively invalid/expired. Other 5xx → treat as unknown.
+      if (resp.statusCode == 401 || resp.statusCode == 403) return false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Exchanges the stored refresh token (usefulteam/jwt-auth) for a fresh
+  /// access token. The refresh token is sent both as a cookie (how the plugin
+  /// issues it) and as a body param for resilience. Returns false when no
+  /// refresh token is stored or the server rejects it.
+  Future<bool> _refreshAccessToken() async {
+    final refresh = _prefs?.getString(_refreshTokenKey);
+    if (refresh == null || refresh.isEmpty) return false;
+    try {
+      final device = await _deviceId();
+      final resp = await http.post(
+        Uri.parse('$kStoreBaseUrl/wp-json/jwt-auth/v1/token/refresh'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': kAppUserAgent,
+          'Cookie': 'refresh_token=$refresh',
+        },
+        body: jsonEncode({'refresh_token': refresh, 'device': device}),
+      ).timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode != 200) return false;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) return false;
+      final newToken = decoded['token'] as String?;
+      if (newToken == null || newToken.isEmpty) return false;
+
+      _captureRefreshTokenFromResponse(resp);
+
+      final s = currentSession;
+      await _persist(
+        email: s?.email ?? _lastAuthEmail ?? '',
+        name: s?.displayName ?? '',
+        role: s?.role ?? 'customers',
+        token: newToken,
+        customerId: s?.customerId,
+      );
+      StoreCartApiService.instance.setJwtToken(newToken);
+      StoreCartApiService.setJwtFallback(newToken);
+      if (kDebugMode) debugPrint('[Auth] access token refreshed via refresh token');
+      return true;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] refresh token error: $e');
+      return false;
+    }
+  }
+
+  /// Persists the `refresh_token` cookie returned by the JWT plugin so we can
+  /// silently refresh later without re-prompting for credentials.
+  void _captureRefreshTokenFromResponse(http.Response resp) {
+    final setCookie = resp.headers['set-cookie'];
+    if (setCookie == null || setCookie.isEmpty) return;
+    final match = RegExp(r'refresh_token=([^;,\s]+)').firstMatch(setCookie);
+    final value = match?.group(1);
+    if (value != null && value.isNotEmpty) {
+      _prefs?.setString(_refreshTokenKey, value);
+    }
+  }
+
+  /// Stable per-install device id so the JWT plugin's refresh-token rotation
+  /// keeps a token reserved for this app (web sessions use their own cookie).
+  Future<String> _deviceId() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    var id = _prefs!.getString(_deviceIdKey);
+    if (id == null || id.isEmpty) {
+      final rnd = Random.secure();
+      id = List<int>.generate(16, (_) => rnd.nextInt(256))
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+      await _prefs!.setString(_deviceIdKey, id);
+    }
+    return id;
+  }
+
+  /// Mints a short-lived one-time code used to log the in-app WebView into the
+  /// website WITHOUT the wp-login form (which triggers the Cerber captcha).
+  /// Requires the Qtoys mobile-session bridge plugin. Returns null on failure.
+  Future<String?> mintWebSessionCode() async {
+    final token = jwtToken;
+    if (token == null || token.isEmpty) return null;
+    try {
+      final resp = await http.post(
+        Uri.parse('$kStoreBaseUrl$kJwtCookieBridgePath/code'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': kAppUserAgent,
+        },
+        body: jsonEncode({'source': 'flutter_app'}),
+      ).timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) return null;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final code = decoded['code'] as String?;
+      return (code != null && code.isNotEmpty) ? code : null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] mintWebSessionCode error: $e');
       return null;
     }
   }
@@ -377,6 +552,8 @@ class AuthService extends ChangeNotifier {
         _lastAuthPassword = password;
         await _prefs?.setString(_webLoginEmailKey, email);
         await _prefs?.setString(_webLoginPasswordKey, password);
+        // Capture the refresh-token cookie so we can silently refresh later.
+        _captureRefreshTokenFromResponse(response);
         await _persist(
           email: userEmail,
           name: displayName,

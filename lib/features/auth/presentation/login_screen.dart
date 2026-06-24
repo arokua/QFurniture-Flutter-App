@@ -155,13 +155,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     : const Text('Sign in'),
                 ),
               ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _isLoading ? null : () => context.go(AppRoutes.home),
-                child: Text(
-                  'Browse latest ${ProductSyncService.guestPreviewProductLimit} products',
-                ),
-              ),
             ],
           ),
         ),

@@ -61,6 +61,21 @@ String get jwtCookieBridgeUrl => '$kStoreBaseUrl$kJwtCookieBridgePath';
 bool get kUseJwtBridgeForExternalBrowser =>
     (dotenv.env['STORE_USE_JWT_BRIDGE_EXTERNAL'] ?? 'true').toLowerCase() == 'true';
 
+/// Most secure WebView login: GET the bridge with a one-time `code` minted by
+/// the app (no JWT in the URL, no login form → no Cerber captcha).
+/// `?code=...&redirect_to=...`
+String buildWebSessionCodeLaunchUrl({
+  required String code,
+  required String redirectUrl,
+}) {
+  return Uri.parse(jwtCookieBridgeUrl).replace(queryParameters: {
+    'code': code,
+    'redirect_to': redirectUrl,
+    'redirect': redirectUrl,
+    'source': 'flutter_app',
+  }).toString();
+}
+
 /// GET variant of [jwtCookieBridgeUrl]: `?token=...&redirect_to=...`
 String buildJwtCookieBridgeLaunchUrl({
   required String jwt,

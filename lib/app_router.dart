@@ -34,22 +34,20 @@ final router = GoRouter(
   redirect: (ctx, state) {
     final signedIn = AuthService.instance.isSignedIn;
     final path = state.uri.path;
-    final isSplash = path == AppRoutes.root;
+
+    // Splash decides where to go (it also validates/refreshes the token).
+    if (path == AppRoutes.root) return null;
+
     final isPublicAuth =
         path == AppRoutes.login || path == AppRoutes.register;
-    final isCatalogPreview = path == AppRoutes.home;
-    final isProductDetail = path.startsWith('/p/');
 
-    if (isSplash) return null;
-
+    // Hard lock: nothing in the app is reachable until the user is signed in.
     if (!signedIn) {
-      if (isPublicAuth) return null;
-      if (isCatalogPreview || isProductDetail) return null;
-      return AppRoutes.login;
+      return isPublicAuth ? null : AppRoutes.login;
     }
 
-    if (path == AppRoutes.login) return AppRoutes.home;
-    if (path == AppRoutes.register) return AppRoutes.home;
+    // Signed in: keep users out of the auth screens.
+    if (isPublicAuth) return AppRoutes.home;
     return null;
   },
   routes: [

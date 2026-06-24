@@ -86,7 +86,7 @@ class CategoryRepository {
   /// Returns category tree (roots with children) for display.
   Future<List<Category>> getCategoryTree() async {
     final flat = await fetchCategories();
-    return buildCategoryTree(flat);
+    return buildCategoryTree(flat, allowedRootsOnly: true);
   }
 
   List<Category> _fallbackCategories() {

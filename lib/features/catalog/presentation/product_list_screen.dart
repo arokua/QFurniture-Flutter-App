@@ -11,6 +11,9 @@ import '../../cart/presentation/widgets/stock_quantity_field.dart';
 import '../domain/product.dart';
 import '../domain/product_pricing_policy.dart';
 import 'category_picker_sheet.dart';
+import '../providers/category_providers.dart';
+import '../domain/category_filter.dart';
+import 'widgets/low_stock_badge.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
@@ -42,12 +45,14 @@ bool productMatchesSearchQuery(Product p, String queryLower) {
 }
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
-final selectedCategoryProvider = StateProvider<String?>((ref) => null);
 final viewModeProvider =
     StateProvider<bool>((ref) => true); // true = grid, false = list
 
-/// Sort: name_asc, name_desc, price_asc, price_desc
+/// Sort: name_asc, name_desc, price_asc, price_desc, stock_asc, stock_desc
 final sortOrderProvider = StateProvider<String>((ref) => 'name_asc');
+
+/// When true, only products with low stock are shown.
+final lowStockOnlyProvider = StateProvider<bool>((ref) => false);
 
 /// Increment to force product list refresh (pull-to-refresh).
 final refreshTriggerProvider = StateProvider<int>((ref) => 0);
@@ -55,11 +60,13 @@ final refreshTriggerProvider = StateProvider<int>((ref) => 0);
 final allProductsProvider = FutureProvider<List<Product>>((ref) async {
   ref.watch(refreshTriggerProvider);
   final sync = ProductSyncService.instance;
+  // Only re-read the catalogue on MAJOR transitions (initial batch ready,
+  // full catalogue ready). The service intentionally does NOT notify on every
+  // page; per-page progress is exposed via syncProgress/syncStatus instead.
   void onSyncUpdate() => ref.invalidateSelf();
   sync.addListener(onSyncUpdate);
   ref.onDispose(() => sync.removeListener(onSyncUpdate));
 
-  await sync.ensureCatalogLoaded();
   final repo = ref.watch(productRepoProvider);
   return repo.getAll();
 });
@@ -68,6 +75,8 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
   final allProducts = ref.watch(allProductsProvider).value ?? [];
   final searchQuery = ref.watch(searchQueryProvider);
   final selectedCategory = ref.watch(selectedCategoryProvider);
+  final lowStockOnly = ref.watch(lowStockOnlyProvider);
+  final categoryIndex = ref.watch(categoryFilterIndexProvider).valueOrNull;
 
   var filtered = allProducts;
 
@@ -85,18 +94,31 @@ final filteredProductsProvider = Provider<List<Product>>((ref) {
   }
 
   if (selectedCategory != null) {
-    final selectedNorm = _ProductListScreenState._normalizeCategoryForMatch(selectedCategory);
-    filtered = filtered.where((p) {
-      final matchList = p.categoryList.any((c) =>
-          _ProductListScreenState._normalizeCategoryForMatch(c) == selectedNorm);
-      if (matchList) return true;
-      final catNorm = _ProductListScreenState._normalizeCategoryForMatch(p.category);
-      return catNorm == selectedNorm;
-    }).toList();
+    if (selectedCategory.id > 0 && categoryIndex != null) {
+      filtered = filtered
+          .where((p) => categoryIndex.productMatches(p, selectedCategory))
+          .toList();
+    } else {
+      filtered = filtered
+          .where((p) => _exactCategoryNameMatch(p, selectedCategory.name))
+          .toList();
+    }
+  }
+
+  if (lowStockOnly) {
+    filtered = filtered.where((p) => p.isLowStock).toList();
   }
 
   return filtered;
 });
+
+bool _exactCategoryNameMatch(Product p, String categoryName) {
+  final norm = normalizeCategoryName(categoryName);
+  for (final c in p.categoryList) {
+    if (normalizeCategoryName(c) == norm) return true;
+  }
+  return normalizeCategoryName(p.category) == norm;
+}
 
 List<Product> _newestProducts(List<Product> products, int limit) {
   if (products.length <= limit) return products;
@@ -190,8 +212,14 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             }
             showCategoryPickerSheet(
               context,
-              onSelected: (name) {
-                ref.read(selectedCategoryProvider.notifier).state = name;
+              onSelected: (category) {
+                ref.read(selectedCategoryProvider.notifier).state =
+                    category == null
+                        ? null
+                        : SelectedCategory(
+                            id: category.id,
+                            name: category.name,
+                          );
               },
             );
           },
@@ -294,7 +322,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Category: ${decodeHtmlEntities(selectedCategory)}',
+                          'Category: ${decodeHtmlEntities(selectedCategory.name)}',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -316,6 +344,19 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 ],
                 Row(
                   children: [
+                    FilterChip(
+                      label: const Text('Low stock'),
+                      avatar: Icon(
+                        Icons.circle,
+                        size: 10,
+                        color: Colors.amber.shade700,
+                      ),
+                      selected: ref.watch(lowStockOnlyProvider),
+                      onSelected: (v) =>
+                          ref.read(lowStockOnlyProvider.notifier).state = v,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const Spacer(),
                     Text(
                       'Sort:',
                       style: Theme.of(context).textTheme.bodySmall,
@@ -335,6 +376,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         DropdownMenuItem(
                             value: 'price_desc',
                             child: Text('Price: high to low')),
+                        DropdownMenuItem(
+                            value: 'stock_asc',
+                            child: Text('Stock: low to high')),
+                        DropdownMenuItem(
+                            value: 'stock_desc',
+                            child: Text('Stock: high to low')),
                       ],
                       onChanged: (v) {
                         if (v != null) {
@@ -344,6 +391,23 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     ),
                   ],
                 ),
+                if (ref.watch(lowStockOnlyProvider)) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const LowStockBadge(showLabel: true),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Yellow dot = low stock (${kLowStockThreshold} or fewer left)',
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                color: Colors.amber.shade900,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -471,19 +535,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     );
   }
 
-  /// Normalize category string for matching (handles "Children's" vs "Childrens", spaces, case).
-  static String _normalizeCategoryForMatch(String s) {
-    if (s.isEmpty) return '';
-    return s
-        .trim()
-        .toLowerCase()
-        .replaceAll("'", '')
-        .replaceAll('\u2019', '') // right single quote
-        .replaceAll('\u2018', '') // left single quote
-        .replaceAll(RegExp(r'\s+'), ' ');
-  }
-
-  /// Sort products by [sortOrder]: name_asc, name_desc, price_asc, price_desc (role-aware price).
+  /// Sort products by [sortOrder] (role-aware price where applicable).
   static List<Product> _sortProducts(
     List<Product> products,
     String sortOrder,
@@ -506,6 +558,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         list.sort((a, b) => b
             .displayCurrentPriceForRole(role)
             .compareTo(a.displayCurrentPriceForRole(role)));
+        break;
+      case 'stock_asc':
+        list.sort((a, b) => a.stockSortKey.compareTo(b.stockSortKey));
+        break;
+      case 'stock_desc':
+        list.sort((a, b) => b.stockSortKey.compareTo(a.stockSortKey));
         break;
       default:
         list.sort((a, b) => a.name.compareTo(b.name));
@@ -669,6 +727,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                               fontWeight: FontWeight.bold),
                         ),
                       ),
+                    ),
+                  if (product.isLowStock)
+                    const Positioned(
+                      top: 8,
+                      right: 8,
+                      child: LowStockBadge(),
                     ),
                   if (!_hidePriceForGuest(product) &&
                       product.onSale &&
@@ -924,6 +988,12 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                           ),
                         ),
                       ),
+                    ),
+                  if (product.isLowStock)
+                    const Positioned(
+                      top: 6,
+                      right: 6,
+                      child: LowStockBadge(),
                     ),
                   if (!_hidePriceForGuest(product) &&
                       product.onSale &&
@@ -1463,42 +1533,52 @@ class _CatalogStatusStrip extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final total = sync.reportedTotal;
-    final progress = total != null && total > 0
-        ? (sync.loadedCount / total).clamp(0.0, 1.0)
-        : null;
-
-    return Material(
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                value: progress,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                sync.statusMessage ?? 'Syncing catalogue in the background…',
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-            if (total != null)
-              Text(
-                '${sync.loadedCount}/$total',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+    // Drive the live progress from the lightweight ValueNotifiers so updating
+    // the bar never re-runs the (expensive) product-list provider.
+    return ValueListenableBuilder<double?>(
+      valueListenable: sync.syncProgress,
+      builder: (context, progress, _) {
+        return ValueListenableBuilder<String?>(
+          valueListenable: sync.syncStatus,
+          builder: (context, status, __) {
+            final total = sync.reportedTotal;
+            return Material(
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.55),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        value: progress,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        status ?? 'Syncing catalogue in the background…',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                    if (total != null)
+                      Text(
+                        '${sync.loadedCount}/$total',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
                 ),
               ),
-          ],
-        ),
-      ),
+            );
+          },
+        );
+      },
     );
   }
 }

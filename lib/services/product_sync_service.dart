@@ -23,6 +23,9 @@ class ProductSyncService extends ChangeNotifier {
   static const int _backgroundRefreshHours = 2;
   static const int _perPage = 100;
 
+  /// Checkpoint cache to disk every N pages during background sync.
+  static const int _saveEveryPages = 5;
+
   /// First network batch for quick startup.
   static const int initialSyncBatchSize = 15;
 
@@ -30,7 +33,7 @@ class ProductSyncService extends ChangeNotifier {
   static const int guestPreviewProductLimit = 30;
 
   static String get _remoteEndpoint =>
-      '${kStoreBaseUrl}/wp-json/wc/store/v1/products';
+      '$kStoreBaseUrl/wp-json/wc/store/v1/products';
 
   bool _syncInFlight = false;
   bool _initialBatchReady = false;
@@ -40,6 +43,12 @@ class ProductSyncService extends ChangeNotifier {
   int _loadedCount = 0;
   int? _reportedTotal;
   String? _statusMessage;
+
+  /// Lightweight, high-frequency progress signal for the status strip.
+  /// Updated on every page so the UI bar animates WITHOUT forcing the heavy
+  /// product-list provider (full JSON decode + Product.fromJson) to re-run.
+  final ValueNotifier<String?> syncStatus = ValueNotifier<String?>(null);
+  final ValueNotifier<double?> syncProgress = ValueNotifier<double?>(null);
 
   bool get initialBatchReady => _initialBatchReady;
   bool get fullCatalogReady => _fullCatalogReady;
@@ -156,7 +165,7 @@ class ProductSyncService extends ChangeNotifier {
       return db.compareTo(da);
     });
     if (sorted.length <= guestPreviewProductLimit) return sorted;
-    return sorted.subList(0, guestPreviewProductLimit);
+    return sorted.sublist(0, guestPreviewProductLimit);
   }
 
   static int _modifiedMs(Map<String, dynamic> p) {
@@ -300,11 +309,24 @@ class ProductSyncService extends ChangeNotifier {
       }
       _loadedCount = byId.length;
       if (total != null) _reportedTotal = total;
+
+      // Lightweight progress only — do NOT notifyListeners() here. Notifying
+      // would invalidate the product provider and re-decode the whole catalog
+      // on every page (heavy on the main isolate → iOS OOM crash).
       _setStatus('Syncing catalogue… $_loadedCount of ${total ?? '?'}');
-      await _saveCache(prefs, byId.values.toList());
-      notifyListeners();
+      syncProgress.value = (total != null && total > 0)
+          ? (_loadedCount / total).clamp(0.0, 1.0)
+          : null;
+
+      // Persist a checkpoint occasionally so a killed sync can resume, but
+      // avoid re-encoding the entire (growing) catalogue on every single page.
+      if (page % _saveEveryPages == 0) {
+        await _saveCache(prefs, byId.values.toList());
+      }
       if (page >= (batch.totalPages ?? page)) break;
       page++;
+      // Yield to the event loop so UI stays responsive between pages.
+      await Future<void>.delayed(Duration.zero);
     }
 
     return byId.values.toList();
@@ -360,6 +382,7 @@ class ProductSyncService extends ChangeNotifier {
 
   void _setStatus(String message) {
     _statusMessage = message;
+    syncStatus.value = message;
   }
 
   // ── Normalization & cache (unchanged behaviour) ─────────────────────────────
