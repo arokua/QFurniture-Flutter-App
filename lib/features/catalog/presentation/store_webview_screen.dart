@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart'
     show debugPrint, kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform;
@@ -141,8 +142,17 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               if (!widget.attemptWebLogin) return;
 
               if (_bridgeNavigationPending) {
-                if (url.contains('mobile-session')) return;
-                await _completeNavigationBridge(url);
+                // If the GET bridge fails it stays on /mobile-session (JSON error).
+                // Do not return early — that left users stuck on the REST "backend" page.
+                if (url.contains('mobile-session')) {
+                  await Future<void>.delayed(const Duration(milliseconds: 400));
+                  final liveUrl = await _controller.currentUrl() ?? url;
+                  await _completeNavigationBridge(
+                    liveUrl.contains('mobile-session') ? url : liveUrl,
+                  );
+                } else {
+                  await _completeNavigationBridge(url);
+                }
                 return;
               }
 
@@ -151,13 +161,22 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
                 return;
               }
               if (!_autoLoginSubmitted) {
-                // We deliberately do NOT auto-submit the wp-login form here:
-                // that path hits the Cerber captcha and blocks the user. The
-                // cookie bridge (one-time code / JWT) is the only auto-login
-                // mechanism. If it didn't establish a session, just continue to
-                // the target page so the user can act manually.
-                _autoLoginSubmitted = true;
-                if (!_addFlowStarted && _addQueue.isNotEmpty) {
+                if (await _verifyWebViewSession()) {
+                  _autoLoginSubmitted = true;
+                  return;
+                }
+                if (await _pageHasCaptchaChallenge()) {
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[StoreWebView] captcha on page — skip auto form submit',
+                    );
+                  }
+                  return;
+                }
+                await _submitWooCommerceLoginIfNeeded();
+                if (!_addFlowStarted &&
+                    _addQueue.isNotEmpty &&
+                    _autoLoginSubmitted) {
                   await _startAddToCartQueue();
                 }
                 return;
@@ -320,6 +339,16 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       // Share the app's WooCommerce session with the WebView so cart/checkout
       // sees the same lines as the Store API client.
       await _injectStoreCartCookies();
+      // Native POST bridge injects HttpOnly auth cookies before any navigation.
+      if (await _injectSessionCookiesFromNativeBridge()) {
+        _authBootstrapDone = true;
+        if (_addQueue.isNotEmpty) {
+          await _startAddToCartQueue();
+        } else {
+          await _controller.loadRequest(Uri.parse(widget.initialUrl));
+        }
+        return;
+      }
       // Prefer navigation bridge on mobile (HttpOnly cookies stick in WKWebView).
       if (await _startNavigationBridgeIfPossible()) return;
       // Fallback: load a store page, then POST bridge via JS on pageFinished.
@@ -408,11 +437,25 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _controller.loadRequest(Uri.parse(target));
   }
 
-  /// Bridge failed to establish a web session. We do NOT navigate to the
-  /// wp-login form (it triggers the Cerber captcha and blocks the user). Just
-  /// load the requested page; the user stays able to browse/checkout and the
-  /// cart cookies that were injected may still apply.
+  /// Bridge failed — open the WooCommerce my-account login form (not wp-login.php)
+  /// and auto-fill stored app credentials when no captcha is present.
   Future<void> _fallbackToFormLoginOrTarget() async {
+    if (AuthService.instance.hasWebLoginCredentials) {
+      final loginUrl = storeMyAccountLoginUrl(
+        accountType: AuthService.instance.webAccountTypeForStoreLogin,
+      );
+      final redirectTo = widget.initialUrl;
+      await _controller.loadRequest(
+        Uri.parse(loginUrl).replace(
+          queryParameters: {
+            ...Uri.parse(loginUrl).queryParameters,
+            'redirect_to': redirectTo,
+          },
+        ),
+      );
+      _autoLoginSubmitted = false;
+      return;
+    }
     _autoLoginSubmitted = true;
     if (_addQueue.isNotEmpty) {
       await _startAddToCartQueue();
@@ -452,6 +495,129 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       return text == 'ok';
     } catch (_) {
       return false;
+    }
+  }
+
+  /// POST the JWT bridge from Dart and push Set-Cookie values into the WebView.
+  /// Works even when the live site has not deployed the /code mint endpoint yet.
+  Future<bool> _injectSessionCookiesFromNativeBridge() async {
+    if (kIsWeb) return false;
+    final token = AuthService.instance.jwtToken;
+    if (token == null || token.isEmpty) return false;
+
+    final client = HttpClient();
+    try {
+      final req = await client.postUrl(Uri.parse(jwtCookieBridgeUrl));
+      req.headers.set('Authorization', 'Bearer $token');
+      req.headers.set('Accept', 'application/json');
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set('User-Agent', kAppUserAgent);
+      req.write(jsonEncode({'source': 'flutter_app_native'}));
+      final resp = await req.close();
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        if (kDebugMode) {
+          debugPrint(
+            '[StoreWebView] native POST bridge HTTP ${resp.statusCode}',
+          );
+        }
+        return false;
+      }
+      await _applyHttpClientSetCookies(resp.headers);
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] native POST bridge cookies injected');
+      }
+      return true;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] native POST bridge error: $e');
+      }
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _applyHttpClientSetCookies(HttpHeaders headers) async {
+    final storeUri = Uri.parse(kStoreBaseUrl);
+    final domain = storeUri.host;
+    final values = <String>[];
+    headers.forEach((name, list) {
+      if (name.toLowerCase() == 'set-cookie') {
+        values.addAll(list);
+      }
+    });
+    if (values.isEmpty) return;
+    for (final header in values) {
+      final parts = header.split(';').map((s) => s.trim()).toList();
+      if (parts.isEmpty) continue;
+      final nv = parts.first.split('=');
+      if (nv.length < 2) continue;
+      final name = nv[0].trim();
+      final value = nv.sublist(1).join('=').trim();
+      if (name.isEmpty) continue;
+      var path = '/';
+      for (final attr in parts.skip(1)) {
+        final lower = attr.toLowerCase();
+        if (lower.startsWith('path=')) {
+          path = attr.substring(5).trim();
+        }
+      }
+      try {
+        await _cookieManager.setCookie(
+          WebViewCookie(name: name, value: value, domain: domain, path: path),
+        );
+      } catch (e) {
+        debugPrint('Native bridge cookie inject error: $e');
+      }
+    }
+  }
+
+  Future<bool> _pageHasCaptchaChallenge() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  if (document.querySelector('.cerber-form, .g-recaptcha, .h-captcha, .cf-turnstile')) return 'yes';
+  if (document.querySelector('iframe[src*="captcha"], iframe[src*="challenges.cloudflare"]')) return 'yes';
+  var t = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : '';
+  if (t.indexOf('confirm you are not a robot') >= 0 || t.indexOf('captcha') >= 0) return 'maybe';
+  return 'no';
+})()
+''');
+      final text = result.toString().replaceAll('"', '').trim();
+      return text == 'yes' || text == 'maybe';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _submitWooCommerceLoginIfNeeded() async {
+    if (_autoLoginSubmitted) return;
+    final email = AuthService.instance.webLoginEmail;
+    final password = AuthService.instance.webLoginPassword;
+    if (email == null || password == null) return;
+    final js = '''
+(function() {
+  var f = document.querySelector('form.woocommerce-form-login');
+  if (!f) return 'no-login-form';
+  var u = f.querySelector('input[name="username"]') || document.querySelector('#username');
+  var p = f.querySelector('input[name="password"]') || document.querySelector('#password');
+  if (!u || !p) return 'no-login-form';
+  u.value = '${_escapeJs(email)}';
+  p.value = '${_escapeJs(password)}';
+  f.submit();
+  return 'submitted';
+})();
+''';
+    try {
+      final result = await _controller.runJavaScriptReturningResult(js);
+      var text = result.toString().trim();
+      if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+        text = text.substring(1, text.length - 1);
+      }
+      if (text != 'submitted') return;
+      _autoLoginSubmitted = true;
+    } catch (e) {
+      debugPrint('WebView WooCommerce auto-login error: $e');
     }
   }
 

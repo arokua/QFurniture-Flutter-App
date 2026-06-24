@@ -387,7 +387,15 @@ class AuthService extends ChangeNotifier {
         },
         body: jsonEncode({'source': 'flutter_app'}),
       ).timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return null;
+      if (resp.statusCode != 200) {
+        if (kDebugMode) {
+          debugPrint(
+            '[Auth] mintWebSessionCode HTTP ${resp.statusCode} '
+            '(deploy qtoys plugin v1.2+ for /mobile-session/code)',
+          );
+        }
+        return null;
+      }
       final decoded = jsonDecode(resp.body);
       if (decoded is! Map<String, dynamic>) return null;
       final code = decoded['code'] as String?;
