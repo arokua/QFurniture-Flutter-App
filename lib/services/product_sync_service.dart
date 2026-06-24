@@ -7,6 +7,7 @@ import '../config/store_config.dart';
 import '../features/catalog/domain/role_pricing.dart';
 import '../features/catalog/utils/html_utils.dart';
 import 'auth_service.dart';
+import 'product_image_cache_service.dart';
 
 /// WooCommerce Store API product sync with phased download:
 /// 1) Latest [initialSyncBatchSize] products first (fast first paint)
@@ -27,7 +28,7 @@ class ProductSyncService extends ChangeNotifier {
   static const int _saveEveryPages = 5;
 
   /// First network batch for quick startup.
-  static const int initialSyncBatchSize = 15;
+  static const int initialSyncBatchSize = kInitialProductBatchSize;
 
   /// Unauthenticated catalogue preview cap.
   static const int guestPreviewProductLimit = 30;
@@ -85,6 +86,7 @@ class ProductSyncService extends ChangeNotifier {
       if (ageHours > _backgroundRefreshHours) {
         _refreshFullCatalogInBackground(prefs);
       }
+      ProductImageCacheService.instance.enqueueProductMaps(decoded);
       return;
     }
 
@@ -96,6 +98,7 @@ class ProductSyncService extends ChangeNotifier {
         _fullCatalogReady = true;
         _setStatus('Preview catalogue ready');
         notifyListeners();
+        ProductImageCacheService.instance.enqueueProductMaps(decoded);
         return;
       }
     }
@@ -204,6 +207,10 @@ class ProductSyncService extends ChangeNotifier {
               : 'Preview: $_loadedCount products (sign in for full catalogue)',
         );
         notifyListeners();
+        ProductImageCacheService.instance.enqueueProductMaps(
+          initial.items,
+          highPriority: true,
+        );
       }
 
       if (!signedIn) {
@@ -228,6 +235,7 @@ class ProductSyncService extends ChangeNotifier {
       if (rest.isNotEmpty) {
         await _saveCache(prefs, rest);
         _loadedCount = rest.length;
+        ProductImageCacheService.instance.enqueueProductMaps(rest);
       }
       _fullCatalogReady = true;
       _setStatus('Catalogue ready ($_loadedCount products)');
@@ -275,6 +283,7 @@ class ProductSyncService extends ChangeNotifier {
           _loadedCount = all.length;
           _fullCatalogReady = true;
           _setStatus('Catalogue updated ($_loadedCount products)');
+          ProductImageCacheService.instance.enqueueProductMaps(all);
         }
       } catch (_) {
       } finally {

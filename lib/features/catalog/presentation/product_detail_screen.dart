@@ -14,6 +14,7 @@ import '../../../services/product_sync_service.dart';
 import 'product_list_screen.dart' show guestPreviewProductList;
 import 'category_navigation.dart';
 import 'widgets/low_stock_badge.dart';
+import 'widgets/product_display_image.dart';
 import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
 import '../../cart/data/woo_cart_provider.dart';
@@ -910,22 +911,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  String _detailImagePathAt(dynamic product, int index) {
-    if (product.images.isNotEmpty && index < product.images.length) {
-      final fromJson = product.images[index];
-      if (isImageUrl(fromJson)) return fromJson;
-      return normalizeAssetPath(fromJson);
-    }
-    
-    // Fallback if images array is empty or out of bounds
-    if (isImageUrl(product.image)) return product.image;
-    return normalizeAssetPath(product.image);
-  }
+  Widget _buildImageGallery(Product product) {
+    final count = product.imageCount;
 
-  Widget _buildImageGallery(product) {
-    final count = product.images.isNotEmpty ? product.images.length : 1;
-
-    // Always use PageView so images are slidable (even with 1 image for consistency)
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -938,28 +926,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             setState(() => _selectedImageIndex = index);
           },
           itemBuilder: (context, index) {
-            final imagePath = _detailImagePathAt(product, index);
-            final useNetwork = isImageUrl(imagePath);
             return Stack(
               fit: StackFit.expand,
               children: [
-                useNetwork
-                    ? CachedNetworkImage(
-                        imageUrl: imagePath,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          color: Colors.grey[200],
-                          child: const Center(
-                              child: CircularProgressIndicator()),
-                        ),
-                        errorWidget: (context, url, error) =>
-                            _buildImagePlaceholder(),
-                      )
-                    : Image.asset(
-                        assetKeyForImage(imagePath),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
-                      ),
+                ProductDisplayImageLive(
+                  product: product,
+                  imageIndex: index,
+                  fit: BoxFit.cover,
+                  errorWidget: _buildImagePlaceholder(),
+                ),
                 if (index == 0 &&
                     product.onSale &&
                     product.regularPrice != null &&

@@ -14,6 +14,7 @@ import 'category_picker_sheet.dart';
 import '../providers/category_providers.dart';
 import '../domain/category_filter.dart';
 import 'widgets/low_stock_badge.dart';
+import 'widgets/product_display_image.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
@@ -647,33 +648,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   }
 
   Widget _buildProductCard(Product product, String? role) {
-    final isUrl = isImageUrl(product.primaryImage);
-    final folder = productFolder(product.sku, product.id);
-    String imagePath;
-    if (isUrl) {
-      imagePath = product.primaryImage;
-    } else if (product.image.isNotEmpty && !isImageUrl(product.image)) {
-      imagePath = normalizeAssetPath(product.image);
-    } else {
-      final ext = extensionFromPath(product.image.isNotEmpty
-          ? product.image
-          : product.images.isNotEmpty
-              ? product.images.first
-              : null);
-      imagePath = normalizeAssetPath(
-          productMainImagePath(product.sku, product.id, ext: ext));
-    }
-    debugLogProductImagePath(
-      screen: 'ProductListGrid',
-      productId: product.id,
-      sku: product.sku,
-      jsonImage: product.image,
-      jsonImagesLength: '${product.images.length}',
-      folder: folder,
-      pathUsed: imagePath,
-      isUrl: isUrl,
-    );
-
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 2,
@@ -683,31 +657,16 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Product Image
             Expanded(
               flex: 3,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  isUrl
-                      ? CachedNetworkImage(
-                          imageUrl: product.primaryImage,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            color: Colors.grey[200],
-                            child: const Center(
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2)),
-                          ),
-                          errorWidget: (context, url, error) =>
-                              _buildImagePlaceholder(),
-                        )
-                      : Image.asset(
-                          assetKeyForImage(imagePath),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              _buildImagePlaceholder(),
-                        ),
+                  ProductDisplayImageLive(
+                    product: product,
+                    fit: BoxFit.cover,
+                    errorWidget: _buildImagePlaceholder(),
+                  ),
                   if (!product.inStock)
                     Positioned(
                       top: 48,
@@ -913,33 +872,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   }
 
   Widget _buildProductListItem(Product product, String? role) {
-    final isUrl = isImageUrl(product.primaryImage);
-    final folder = productFolder(product.sku, product.id);
-    String imagePath;
-    if (isUrl) {
-      imagePath = product.primaryImage;
-    } else if (product.image.isNotEmpty && !isImageUrl(product.image)) {
-      imagePath = normalizeAssetPath(product.image);
-    } else {
-      final ext = extensionFromPath(product.image.isNotEmpty
-          ? product.image
-          : product.images.isNotEmpty
-              ? product.images.first
-              : null);
-      imagePath = normalizeAssetPath(
-          productMainImagePath(product.sku, product.id, ext: ext));
-    }
-    debugLogProductImagePath(
-      screen: 'ProductListRow',
-      productId: product.id,
-      sku: product.sku,
-      jsonImage: product.image,
-      jsonImagesLength: '${product.images.length}',
-      folder: folder,
-      pathUsed: imagePath,
-      isUrl: isUrl,
-    );
-
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
@@ -949,32 +881,17 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         onTap: () => _showQuickView(context, product, ref, role),
         child: Row(
           children: [
-            // Product Image
             SizedBox(
               width: 120,
               height: 120,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  isUrl
-                      ? CachedNetworkImage(
-                          imageUrl: product.primaryImage,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            color: Colors.grey[200],
-                            child: const Center(
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2)),
-                          ),
-                          errorWidget: (context, url, error) =>
-                              _buildImagePlaceholder(),
-                        )
-                      : Image.asset(
-                          assetKeyForImage(imagePath),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              _buildImagePlaceholder(),
-                        ),
+                  ProductDisplayImageLive(
+                    product: product,
+                    fit: BoxFit.cover,
+                    errorWidget: _buildImagePlaceholder(),
+                  ),
                   if (!product.inStock)
                     Positioned.fill(
                       child: Container(
@@ -1179,39 +1096,17 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
     }
   }
 
-  String _imagePath(Product p) {
-    if (isImageUrl(p.primaryImage)) return p.primaryImage;
-    if (p.image.isNotEmpty && !isImageUrl(p.image)) {
-      return normalizeAssetPath(p.image);
-    }
-    final ext = extensionFromPath(p.image.isNotEmpty
-        ? p.image
-        : p.images.isNotEmpty
-            ? p.images.first
-            : null);
-    return normalizeAssetPath(productMainImagePath(p.sku, p.id, ext: ext));
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final p = widget.product;
-    final imagePath = _imagePath(p);
-    final isUrl = isImageUrl(p.primaryImage);
 
     return ListenableBuilder(
       listenable: AuthService.instance,
       builder: (context, _) {
         final locked = skuRequiresLoginToViewPrice(p.sku) &&
             !AuthService.instance.isSignedIn;
-        return _quickViewBody(
-          context,
-          theme,
-          p,
-          imagePath,
-          isUrl,
-          locked,
-        );
+        return _quickViewBody(context, theme, p, locked);
       },
     );
   }
@@ -1220,8 +1115,6 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
     BuildContext context,
     ThemeData theme,
     Product p,
-    String imagePath,
-    bool isUrl,
     bool priceLocked,
   ) {
     return Container(
@@ -1264,25 +1157,14 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                 child: SizedBox(
                   width: 100,
                   height: 100,
-                  child: isUrl
-                      ? CachedNetworkImage(
-                          imageUrl: p.primaryImage,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) =>
-                              Container(color: Colors.grey[200]),
-                          errorWidget: (context, url, error) => const Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey,
-                          ),
-                        )
-                      : Image.asset(
-                          assetKeyForImage(imagePath),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.image_not_supported,
-                            color: Colors.grey,
-                          ),
-                        ),
+                  child: ProductDisplayImageLive(
+                    product: p,
+                    fit: BoxFit.cover,
+                    errorWidget: const Icon(
+                      Icons.image_not_supported,
+                      color: Colors.grey,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 16),

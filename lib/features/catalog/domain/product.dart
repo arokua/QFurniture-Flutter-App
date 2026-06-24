@@ -358,6 +358,20 @@ class Product {
   String get primaryImage =>
       image.isNotEmpty ? image : (images.isNotEmpty ? images.first : "");
 
+  /// Remote URL, bundled asset path, or empty for [imageIndex] (gallery order).
+  String imageSourceAt(int index) {
+    if (images.isNotEmpty && index < images.length) {
+      return images[index];
+    }
+    if (index == 0) {
+      if (image.isNotEmpty) return image;
+      return primaryImage;
+    }
+    return '';
+  }
+
+  int get imageCount => images.isNotEmpty ? images.length : (primaryImage.isNotEmpty ? 1 : 0);
+
   int? get parsedStockQuantityApprox {
     if (!inStock) return 0;
     final s = stockAmount?.trim();
