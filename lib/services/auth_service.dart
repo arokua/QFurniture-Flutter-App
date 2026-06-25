@@ -370,6 +370,15 @@ class AuthService extends ChangeNotifier {
     return id;
   }
 
+  /// Mints a short-lived one-time code (retries once after session refresh).
+  Future<String?> mintWebSessionCodeWithRetry() async {
+    await ensureValidSession();
+    var code = await mintWebSessionCode();
+    if (code != null && code.isNotEmpty) return code;
+    await ensureValidSession();
+    return mintWebSessionCode();
+  }
+
   /// Mints a short-lived one-time code used to log the in-app WebView into the
   /// website WITHOUT the wp-login form (which triggers the Cerber captcha).
   /// Requires the Qtoys mobile-session bridge plugin. Returns null on failure.

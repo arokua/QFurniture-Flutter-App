@@ -46,7 +46,7 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
 
     final headers = <String, String>{
       'Accept': 'application/json',
-      'User-Agent': 'QToysApp/1.0',
+      'User-Agent': kAppUserAgent,
     };
     if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
     if (cookie.isNotEmpty) headers['Cookie'] = cookie;

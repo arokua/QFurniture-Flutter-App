@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../services/auth_service.dart';
 import '../services/product_sync_service.dart';
+import '../config/store_cart_api_service.dart';
 
 /// Branded splash screen showing the qtoys logo (QIcon2.png).
 /// Waits for the first product batch (or a short timeout) before opening the catalog.
@@ -58,6 +59,10 @@ class _SplashScreenState extends State<SplashScreen>
       context.go(AppRoutes.login);
       return;
     }
+
+    // Re-prime Woo cart session cookies after token refresh on cold start.
+    await StoreCartApiService.instance
+        .bootstrapSessionFromJwt(auth.jwtToken);
 
     // Signed in: start the phased catalogue sync and wait briefly for batch 1.
     final sync = ProductSyncService.instance;

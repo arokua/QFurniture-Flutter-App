@@ -9,10 +9,10 @@ import 'woo_cart_provider.dart';
 /// Refreshes the WooCommerce cart when the app returns to the foreground and
 /// on a periodic interval so web-only cart edits propagate without opening Cart.
 class CartRemoteSyncBinding extends ConsumerStatefulWidget {
-  const CartRemoteSyncBinding({
+  const     CartRemoteSyncBinding({
     super.key,
     required this.child,
-    this.periodicInterval = const Duration(minutes: 7),
+    this.periodicInterval = const Duration(minutes: 3),
   });
 
   final Widget child;

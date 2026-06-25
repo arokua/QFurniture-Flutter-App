@@ -1,8 +1,11 @@
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
 import 'store_config.dart';
 
 /// WooCommerce Store API (wc/store/v1) cart: add, remove, update.
@@ -164,24 +167,7 @@ class StoreCartApiService {
   Future<bool> bootstrapSessionFromJwt(String? jwt) async {
     final token = jwt?.trim();
     if (token == null || token.isEmpty) return false;
-    try {
-      final bridge = Uri.parse(jwtCookieBridgeUrl);
-      final res = await http
-          .post(
-            bridge,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({'source': 'flutter_app_login'}),
-          )
-          .timeout(const Duration(seconds: 15));
-      await _absorbResponse(res);
-    } catch (_) {
-      // continue with cart prime attempt below
-    }
-
+    await _postJwtCookieBridge(token, source: 'flutter_app_login');
     try {
       final cart = await fetchFullCart();
       if (cart.success && cart.data != null) {
@@ -191,6 +177,138 @@ class StoreCartApiService {
     } catch (_) {
       return hasSession;
     }
+  }
+
+  /// POST `/wp-json/qtoys/v1/mobile-session` and mirror Set-Cookie into the
+  /// WebView jar + app cart session. Returns true when WP auth cookies arrived.
+  /// Never navigates the WebView to a REST URL (WAF/Cerber safe).
+  Future<bool> establishWebSessionForWebView(
+    WebViewCookieManager cookieManager,
+  ) async {
+    if (kIsWeb) return false;
+    final token = (_jwtToken?.isNotEmpty == true) ? _jwtToken! : _jwtFallback;
+    if (token == null || token.isEmpty) return false;
+
+    final client = HttpClient();
+    try {
+      final req = await client.postUrl(Uri.parse(jwtCookieBridgeUrl));
+      req.headers.set('Authorization', 'Bearer $token');
+      req.headers.set('Accept', 'application/json');
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set('User-Agent', kAppUserAgent);
+      req.write(jsonEncode({'source': 'flutter_app_webview'}));
+      final resp = await req.close();
+      final body = await resp.transform(utf8.decoder).join();
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        if (kDebugMode) {
+          debugPrint(
+            '[StoreCart] web session bridge HTTP ${resp.statusCode} '
+            'body=${body.length > 120 ? '${body.substring(0, 120)}…' : body}',
+          );
+        }
+        return false;
+      }
+
+      final hadAuth = await _mirrorSetCookiesToWebView(
+        resp.headers,
+        cookieManager,
+      );
+      await _absorbSetCookieHeaders(resp.headers);
+      if (kDebugMode) {
+        debugPrint(
+          '[StoreCart] web session bridge ok authCookies=$hadAuth',
+        );
+      }
+      return hadAuth;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[StoreCart] web session bridge error: $e');
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _postJwtCookieBridge(
+    String token, {
+    required String source,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse(jwtCookieBridgeUrl),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'User-Agent': kAppUserAgent,
+            },
+            body: jsonEncode({'source': source}),
+          )
+          .timeout(const Duration(seconds: 15));
+      await _absorbResponse(res);
+    } catch (_) {
+      // Cart prime may still succeed with JWT Bearer alone.
+    }
+  }
+
+  Future<bool> _mirrorSetCookiesToWebView(
+    HttpHeaders headers,
+    WebViewCookieManager cookieManager,
+  ) async {
+    final domain = Uri.parse(kStoreBaseUrl).host;
+    var hadAuth = false;
+    headers.forEach((name, values) {
+      if (name.toLowerCase() != 'set-cookie') return;
+      for (final header in values) {
+        final parts = header.split(';').map((s) => s.trim()).toList();
+        if (parts.isEmpty) continue;
+        final nv = parts.first.split('=');
+        if (nv.length < 2) continue;
+        final cookieName = nv[0].trim();
+        final cookieValue = nv.sublist(1).join('=').trim();
+        if (cookieName.isEmpty) continue;
+        final lower = cookieName.toLowerCase();
+        if (lower.startsWith('wordpress_logged_in') ||
+            lower.startsWith('wordpress_sec_')) {
+          hadAuth = true;
+        }
+        var path = '/';
+        for (final attr in parts.skip(1)) {
+          if (attr.toLowerCase().startsWith('path=')) {
+            path = attr.substring(5).trim();
+          }
+        }
+        cookieManager
+            .setCookie(
+              WebViewCookie(
+                name: cookieName,
+                value: cookieValue,
+                domain: domain,
+                path: path,
+              ),
+            )
+            .catchError((_) {});
+      }
+    });
+    return hadAuth;
+  }
+
+  Future<void> _absorbSetCookieHeaders(HttpHeaders headers) async {
+    final pairs = <String>[];
+    headers.forEach((name, values) {
+      if (name.toLowerCase() != 'set-cookie') return;
+      for (final header in values) {
+        final first = header.split(';').first.trim();
+        if (first.isNotEmpty) pairs.add(first);
+      }
+    });
+    if (pairs.isEmpty) return;
+    final merged = pairs.join('; ');
+    _cookie = _mergeCookiesPreservingSession(
+      existing: _cookie,
+      incoming: merged,
+    );
+    await _prefs?.setString('cart_session_cookie', _cookie ?? merged);
   }
 
   /// Persist [Cart-Token] from a WooCommerce Store API `GET /cart` JSON body (e.g. WebView).
@@ -227,7 +345,7 @@ class StoreCartApiService {
   Map<String, String> get _getHeaders {
     final h = <String, String>{
       'Accept': 'application/json',
-      'User-Agent': 'QToysApp/1.0',
+      'User-Agent': kAppUserAgent,
     };
     if (_cookie != null && _cookie!.isNotEmpty) h['Cookie'] = _cookie!;
     if (_cartToken != null && _cartToken!.isNotEmpty) h['Cart-Token'] = _cartToken!;
@@ -243,7 +361,7 @@ class StoreCartApiService {
     final h = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'User-Agent': 'QToysApp/1.0',
+      'User-Agent': kAppUserAgent,
     };
     if (_cookie != null && _cookie!.isNotEmpty) h['Cookie'] = _cookie!;
     if (_cartToken != null && _cartToken!.isNotEmpty) h['Cart-Token'] = _cartToken!;

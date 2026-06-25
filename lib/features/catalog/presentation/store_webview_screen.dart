@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart'
     show debugPrint, kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform;
@@ -98,6 +97,34 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) {
+            if (!widget.attemptWebLogin) {
+              return NavigationDecision.navigate;
+            }
+            final u = request.url.toLowerCase();
+            // Cerber/Turnstile trap — never show wp-login in the WebView.
+            if (u.contains('wp-login.php') || u.contains('/wp-admin')) {
+              if (kDebugMode) {
+                debugPrint(
+                  '[StoreWebView] blocked navigation to $u — using storefront login',
+                );
+              }
+              _redirectToStorefrontLogin();
+              return NavigationDecision.prevent;
+            }
+            // Never leave the user on a REST JSON error page.
+            if (u.contains('/wp-json/qtoys/v1/mobile-session') &&
+                !u.contains('code=')) {
+              if (kDebugMode) {
+                debugPrint(
+                  '[StoreWebView] blocked token/JSON bridge URL — retrying safe bridge',
+                );
+              }
+              _retrySafeWebSessionBridge();
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
           onPageStarted: (_) {},
           onPageFinished: (String url) async {
             try {
@@ -295,68 +322,81 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     return widget.initialUrl;
   }
 
-  /// Navigation-based JWT→cookie bridge (reliable on iOS WKWebView).
-  /// Requires GET handler on `/wp-json/qtoys/v1/mobile-session` (see wordpress/).
-  ///
-  /// Prefers a one-time `code` (minted by the app over Bearer auth) so the JWT
-  /// never appears in the URL/server logs and the wp-login form (Cerber
-  /// captcha) is never shown. Falls back to `?token=` if minting fails.
-  Future<bool> _startNavigationBridgeIfPossible() async {
+  /// Navigation-based one-time code bridge (redirect only — never shows JSON).
+  Future<bool> _startCodeNavigationBridge() async {
     if (kIsWeb) return false;
-    final token = AuthService.instance.jwtToken;
-    if (token == null || token.isEmpty) return false;
+    final code = await AuthService.instance.mintWebSessionCodeWithRetry();
+    if (code == null || code.isEmpty) return false;
 
     _postBridgeTargetUrl = _targetAfterBridge();
     _bridgeNavigationPending = true;
-
-    final code = await AuthService.instance.mintWebSessionCode();
-    final String bridgeUrl;
-    if (code != null && code.isNotEmpty) {
-      bridgeUrl = buildWebSessionCodeLaunchUrl(
-        code: code,
-        redirectUrl: _postBridgeTargetUrl!,
-      );
-    } else {
-      bridgeUrl = buildJwtCookieBridgeLaunchUrl(
-        jwt: token,
-        redirectUrl: _postBridgeTargetUrl!,
-      );
-    }
+    final bridgeUrl = buildWebSessionCodeLaunchUrl(
+      code: code,
+      redirectUrl: _postBridgeTargetUrl!,
+    );
     if (kDebugMode) {
-      debugPrint(
-        '[StoreWebView] navigation bridge (${code != null ? 'code' : 'token'}) → $bridgeUrl',
-      );
+      debugPrint('[StoreWebView] code navigation bridge → $bridgeUrl');
     }
     await _controller.loadRequest(Uri.parse(bridgeUrl));
     return true;
   }
 
-  Future<void> _injectCookiesAndLoad() async {
-    if (widget.attemptWebLogin) {
-      // Make sure the JWT is fresh before we hand it to the cookie bridge —
-      // an expired token would make the bridge fail and force the captcha form.
-      await AuthService.instance.ensureValidSession();
-      // Share the app's WooCommerce session with the WebView so cart/checkout
-      // sees the same lines as the Store API client.
-      await _injectStoreCartCookies();
-      // Native POST bridge injects HttpOnly auth cookies before any navigation.
-      if (await _injectSessionCookiesFromNativeBridge()) {
-        _authBootstrapDone = true;
-        if (_addQueue.isNotEmpty) {
-          await _startAddToCartQueue();
-        } else {
-          await _controller.loadRequest(Uri.parse(widget.initialUrl));
-        }
-        return;
-      }
-      // Prefer navigation bridge on mobile (HttpOnly cookies stick in WKWebView).
-      if (await _startNavigationBridgeIfPossible()) return;
-      // Fallback: load a store page, then POST bridge via JS on pageFinished.
+  Future<void> _retrySafeWebSessionBridge() async {
+    if (!mounted || !widget.attemptWebLogin) return;
+    _bridgeNavigationPending = false;
+    _authBootstrapDone = false;
+    _autoLoginSubmitted = false;
+    await _establishWebSessionAndLoadTarget();
+  }
+
+  Future<void> _redirectToStorefrontLogin() async {
+    if (!AuthService.instance.hasWebLoginCredentials) return;
+    final loginUrl = storeMyAccountLoginUrl(
+      accountType: AuthService.instance.webAccountTypeForStoreLogin,
+    );
+    await _controller.loadRequest(
+      Uri.parse(loginUrl).replace(
+        queryParameters: {
+          ...Uri.parse(loginUrl).queryParameters,
+          'redirect_to': widget.initialUrl,
+        },
+      ),
+    );
+    _autoLoginSubmitted = false;
+  }
+
+  Future<void> _resetWebViewCookiesForAuth() async {
+    try {
+      await _cookieManager.clearCookies();
+    } catch (_) {}
+    await _injectStoreCartCookies();
+  }
+
+  Future<void> _establishWebSessionAndLoadTarget() async {
+    await AuthService.instance.ensureValidSession();
+    await _resetWebViewCookiesForAuth();
+
+    if (await _startCodeNavigationBridge()) return;
+
+    final bridged = await StoreCartApiService.instance
+        .establishWebSessionForWebView(_cookieManager);
+    _authBootstrapDone = true;
+    if (bridged) {
       if (_addQueue.isNotEmpty) {
-        await _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+        await _startAddToCartQueue();
       } else {
         await _controller.loadRequest(Uri.parse(widget.initialUrl));
       }
+      return;
+    }
+
+    // Last resort: storefront page + JS POST bridge (same-origin, no REST page).
+    await _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+  }
+
+  Future<void> _injectCookiesAndLoad() async {
+    if (widget.attemptWebLogin) {
+      await _establishWebSessionAndLoadTarget();
       return;
     }
     // No auth needed: inject cookies then immediately start queue or load target.
@@ -495,80 +535,6 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       return text == 'ok';
     } catch (_) {
       return false;
-    }
-  }
-
-  /// POST the JWT bridge from Dart and push Set-Cookie values into the WebView.
-  /// Works even when the live site has not deployed the /code mint endpoint yet.
-  Future<bool> _injectSessionCookiesFromNativeBridge() async {
-    if (kIsWeb) return false;
-    final token = AuthService.instance.jwtToken;
-    if (token == null || token.isEmpty) return false;
-
-    final client = HttpClient();
-    try {
-      final req = await client.postUrl(Uri.parse(jwtCookieBridgeUrl));
-      req.headers.set('Authorization', 'Bearer $token');
-      req.headers.set('Accept', 'application/json');
-      req.headers.set('Content-Type', 'application/json');
-      req.headers.set('User-Agent', kAppUserAgent);
-      req.write(jsonEncode({'source': 'flutter_app_native'}));
-      final resp = await req.close();
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        if (kDebugMode) {
-          debugPrint(
-            '[StoreWebView] native POST bridge HTTP ${resp.statusCode}',
-          );
-        }
-        return false;
-      }
-      await _applyHttpClientSetCookies(resp.headers);
-      if (kDebugMode) {
-        debugPrint('[StoreWebView] native POST bridge cookies injected');
-      }
-      return true;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[StoreWebView] native POST bridge error: $e');
-      }
-      return false;
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  Future<void> _applyHttpClientSetCookies(HttpHeaders headers) async {
-    final storeUri = Uri.parse(kStoreBaseUrl);
-    final domain = storeUri.host;
-    final values = <String>[];
-    headers.forEach((name, list) {
-      if (name.toLowerCase() == 'set-cookie') {
-        values.addAll(list);
-      }
-    });
-    if (values.isEmpty) return;
-    for (final header in values) {
-      final parts = header.split(';').map((s) => s.trim()).toList();
-      if (parts.isEmpty) continue;
-      final nv = parts.first.split('=');
-      if (nv.length < 2) continue;
-      final name = nv[0].trim();
-      final value = nv.sublist(1).join('=').trim();
-      if (name.isEmpty) continue;
-      var path = '/';
-      for (final attr in parts.skip(1)) {
-        final lower = attr.toLowerCase();
-        if (lower.startsWith('path=')) {
-          path = attr.substring(5).trim();
-        }
-      }
-      try {
-        await _cookieManager.setCookie(
-          WebViewCookie(name: name, value: value, domain: domain, path: path),
-        );
-      } catch (e) {
-        debugPrint('Native bridge cookie inject error: $e');
-      }
     }
   }
 

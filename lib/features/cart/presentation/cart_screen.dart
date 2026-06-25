@@ -29,7 +29,7 @@ final rawStoreCartDebugProvider =
 
   final headers = <String, String>{
     'Accept': 'application/json',
-    'User-Agent': 'QToysApp/debug',
+    'User-Agent': kAppUserAgent,
   };
   if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
   if (cookie.isNotEmpty) headers['Cookie'] = cookie;

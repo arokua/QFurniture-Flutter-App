@@ -274,16 +274,49 @@ class ProductSyncService extends ChangeNotifier {
     Future.microtask(() async {
       _syncInFlight = true;
       _isSyncingRest = true;
-      _setStatus('Refreshing catalogue in background…');
+      _setStatus('Refreshing stock & prices…');
       notifyListeners();
       try {
-        final all = await _fetchAllRemote();
-        if (all.isNotEmpty) {
-          await _saveCache(prefs, all);
-          _loadedCount = all.length;
+        final cachedJson = prefs.getString(_cacheKey);
+        final cached = cachedJson != null ? _decode(cachedJson) : <Map<String, dynamic>>[];
+        final byId = <int, Map<String, dynamic>>{};
+        for (final p in cached) {
+          final id = p['id'];
+          if (id is int) byId[id] = Map<String, dynamic>.from(p);
+        }
+
+        var page = 1;
+        var updated = 0;
+        while (true) {
+          final batch = await _fetchRemotePage(page: page, perPage: _perPage);
+          if (batch.items.isEmpty) break;
+          for (final remote in batch.items) {
+            final id = remote['id'];
+            if (id is! int) continue;
+            final existing = byId[id];
+            if (existing == null) {
+              byId[id] = remote;
+              updated++;
+              ProductImageCacheService.instance.enqueueProductMaps([remote]);
+            } else if (_applyIncrementalProductUpdate(existing, remote)) {
+              updated++;
+            }
+          }
+          if (batch.totalPages != null && page >= batch.totalPages!) break;
+          page++;
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        if (byId.isNotEmpty) {
+          final list = byId.values.toList();
+          await _saveCache(prefs, list);
+          _loadedCount = list.length;
           _fullCatalogReady = true;
-          _setStatus('Catalogue updated ($_loadedCount products)');
-          ProductImageCacheService.instance.enqueueProductMaps(all);
+          _setStatus(
+            updated > 0
+                ? 'Catalogue updated ($_loadedCount products, $updated changed)'
+                : 'Catalogue ready ($_loadedCount products)',
+          );
         }
       } catch (_) {
       } finally {
@@ -292,6 +325,75 @@ class ProductSyncService extends ChangeNotifier {
         notifyListeners();
       }
     });
+  }
+
+  /// Updates stock/price fields in [local]. Returns true when anything changed.
+  /// When the remote image list differs, prepends new URLs at indices 0..n-1
+  /// and queues image downloads for those slots only.
+  bool _applyIncrementalProductUpdate(
+    Map<String, dynamic> local,
+    Map<String, dynamic> remote,
+  ) {
+    var changed = false;
+
+    void setIfDifferent(String key, dynamic value) {
+      if (local[key] != value) {
+        local[key] = value;
+        changed = true;
+      }
+    }
+
+    setIfDifferent('price', remote['price']);
+    setIfDifferent('regularPrice', remote['regularPrice']);
+    setIfDifferent('salePrice', remote['salePrice']);
+    setIfDifferent('onSale', remote['onSale']);
+    setIfDifferent('rolePrices', remote['rolePrices']);
+    setIfDifferent('inStock', remote['inStock']);
+    setIfDifferent('stockAmount', remote['stockAmount']);
+    setIfDifferent('modified', remote['modified']);
+    setIfDifferent('currency', remote['currency']);
+
+    final oldImages = _imageUrlList(local['images']);
+    final remoteImages = _imageUrlList(remote['images']);
+    if (!_imageUrlListsEqual(oldImages, remoteImages)) {
+      final merged = _mergeNewImagesToFront(oldImages, remoteImages);
+      local['images'] = merged;
+      final primary = merged.isNotEmpty ? merged.first : local['image'];
+      setIfDifferent('image', primary);
+      ProductImageCacheService.instance.enqueueProductMaps([local]);
+    }
+
+    return changed;
+  }
+
+  static List<String> _imageUrlList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw.map((e) => e.toString()).where((u) => u.isNotEmpty).toList();
+  }
+
+  static bool _imageUrlListsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// New remote URLs (not in [local]) are placed at indices 0..n-1; remainder kept.
+  static List<String> _mergeNewImagesToFront(
+    List<String> local,
+    List<String> remote,
+  ) {
+    final newOnes = <String>[];
+    for (final u in remote) {
+      if (!local.contains(u)) newOnes.add(u);
+    }
+    if (newOnes.isEmpty) return remote;
+    final tail = [
+      ...local.where((u) => !newOnes.contains(u)),
+      ...remote.where((u) => !newOnes.contains(u) && !local.contains(u)),
+    ];
+    return [...newOnes, ...tail];
   }
 
   Future<List<Map<String, dynamic>>> _fetchRemainingAfterInitial({
