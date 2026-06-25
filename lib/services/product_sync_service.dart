@@ -478,19 +478,6 @@ class ProductSyncService extends ChangeNotifier {
     );
   }
 
-  Future<List<Map<String, dynamic>>> _fetchAllRemote() async {
-    final all = <Map<String, dynamic>>[];
-    var page = 1;
-    while (true) {
-      final batch = await _fetchRemotePage(page: page, perPage: _perPage);
-      if (batch.items.isEmpty) break;
-      all.addAll(batch.items);
-      if (batch.totalPages != null && page >= batch.totalPages!) break;
-      page++;
-    }
-    return all;
-  }
-
   void _setStatus(String message) {
     _statusMessage = message;
     syncStatus.value = message;

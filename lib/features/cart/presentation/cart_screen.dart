@@ -123,7 +123,16 @@ class _CartScreenBody extends ConsumerWidget {
     return wooAsync.when(
       loading: () => Scaffold(
         appBar: AppBar(title: const Text('Cart'), elevation: 0),
-        body: const Center(child: CircularProgressIndicator()),
+        body: RefreshIndicator(
+          onRefresh: () => _onRefreshCart(ref),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: const [
+              SizedBox(height: 120),
+              Center(child: CircularProgressIndicator()),
+            ],
+          ),
+        ),
       ),
       error: (e, st) => _emptyScaffold(
         context,
@@ -139,6 +148,22 @@ class _CartScreenBody extends ConsumerWidget {
         return _loadedScaffold(context, ref, snap: snap, isWholesale: isWholesale);
       },
     );
+  }
+
+  /// Pull-to-refresh and app-bar refresh: re-sync JWT/cookies then fetch live cart.
+  static Future<void> _onRefreshCart(WidgetRef ref) async {
+    if (AuthService.instance.isSignedIn) {
+      await AuthService.instance.ensureValidSession();
+      await StoreCartApiService.instance
+          .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+      ref.invalidate(wooCartProvider);
+      try {
+        await ref.read(wooCartProvider.future);
+      } catch (_) {}
+      await ref.read(cartProvider.notifier).refreshFromRemote();
+      return;
+    }
+    await ref.read(cartProvider.notifier).refreshFromRemote();
   }
 
   // â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -161,9 +186,12 @@ class _CartScreenBody extends ConsumerWidget {
             ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: [
+      body: RefreshIndicator(
+        onRefresh: () => _onRefreshCart(ref),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          children: [
           const SizedBox(height: 60),
           Icon(Icons.shopping_cart_outlined, size: 80, color: Colors.grey[400]),
           const SizedBox(height: 16),
@@ -197,13 +225,14 @@ class _CartScreenBody extends ConsumerWidget {
               child: TextButton.icon(
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('Refresh cart'),
-                onPressed: () => ref.invalidate(wooCartProvider),
+                onPressed: () => _onRefreshCart(ref),
               ),
             ),
           ],
           const SizedBox(height: 24),
           // const _StoreCartDebugPanel(),
         ],
+        ),
       ),
     );
   }
@@ -231,7 +260,7 @@ class _CartScreenBody extends ConsumerWidget {
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'Refresh cart',
-              onPressed: () => ref.invalidate(wooCartProvider),
+              onPressed: () => _onRefreshCart(ref),
             ),
           TextButton(
             onPressed: () async {
@@ -248,9 +277,12 @@ class _CartScreenBody extends ConsumerWidget {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: snap.lines.length,
+            child: RefreshIndicator(
+              onRefresh: () => _onRefreshCart(ref),
+              child: ListView.builder(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                itemCount: snap.lines.length,
               itemBuilder: (context, i) {
                 final line = snap.lines[i];
                 return _CartLineCard(
@@ -274,6 +306,7 @@ class _CartScreenBody extends ConsumerWidget {
                   },
                 );
               },
+            ),
             ),
           ),
           _CartSummary(snapshot: snap, isWholesale: isWholesale),
@@ -352,9 +385,12 @@ class _GuestCartScaffold extends ConsumerWidget {
           body: Column(
             children: [
               Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: lines.length,
+                child: RefreshIndicator(
+                  onRefresh: () => _CartScreenBody._onRefreshCart(ref),
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    itemCount: lines.length,
                   itemBuilder: (context, index) {
                     final line = lines[index];
                     final item = line.item;
@@ -400,6 +436,7 @@ class _GuestCartScaffold extends ConsumerWidget {
                       },
                     );
                   },
+                ),
                 ),
               ),
               _GuestCartSummary(
