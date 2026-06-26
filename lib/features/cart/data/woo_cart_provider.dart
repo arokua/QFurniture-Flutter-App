@@ -1,13 +1,10 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 
 import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../domain/cart_item.dart';
+import 'cart_session_refresh.dart';
 import 'store_cart_json.dart';
 import 'store_cart_snapshot.dart';
 
@@ -28,10 +25,8 @@ class WooCartState {
   static const empty = WooCartState(items: []);
 }
 
-/// Fetches `/wp-json/wc/store/v1/cart` directly — same approach as the
-/// debug panel that returns 200 successfully.
-/// Absorbs response headers (Nonce, Cart-Token) so the service layer can
-/// use them for future POST requests (add/remove/update).
+/// Fetches `/wp-json/wc/store/v1/cart` via [StoreCartApiService] after
+/// refreshing the JWT + cookie bridge session.
 class WooCartNotifier extends AsyncNotifier<WooCartState> {
   @override
   Future<WooCartState> build() => _fetch();
@@ -39,43 +34,33 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
   Future<WooCartState> _fetch() async {
     if (!AuthService.instance.isSignedIn) return WooCartState.empty;
 
-    // Use every credential we have — mirrors the debug panel that works.
-    final jwt = AuthService.instance.jwtToken ?? '';
-    final cookie = StoreCartApiService.instance.cookie ?? '';
-    final cartToken = StoreCartApiService.instance.cartToken ?? '';
+    await refreshCartSession();
 
-    final headers = <String, String>{
-      'Accept': 'application/json',
-      'User-Agent': kAppUserAgent,
-    };
-    if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
-    if (cookie.isNotEmpty) headers['Cookie'] = cookie;
-    if (cartToken.isNotEmpty) headers['Cart-Token'] = cartToken;
-
-    final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart');
-    if (kDebugMode) debugPrint('[WooCart] GET $url');
-
-    final res = await http
-        .get(url, headers: headers)
-        .timeout(const Duration(seconds: 15));
-
-    if (kDebugMode) {
-      debugPrint('[WooCart] → ${res.statusCode} len=${res.body.length}');
+    var remote = await StoreCartApiService.instance.fetchFullCart();
+    if (!remote.success || remote.data == null) {
+      await StoreCartApiService.instance
+          .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+      remote = await StoreCartApiService.instance.fetchFullCart();
     }
 
-    if (res.statusCode != 200) {
-      throw Exception('Cart API returned ${res.statusCode}: ${res.body.length > 200 ? res.body.substring(0, 200) : res.body}');
+    if (!remote.success || remote.data == null) {
+      final previous = state.valueOrNull;
+      if (previous != null &&
+          previous.snapshot != null &&
+          !previous.isEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            '[WooCart] fetch failed — showing last synced cart '
+            '(${previous.items.length} items)',
+          );
+        }
+        return previous;
+      }
+      throw Exception('Cart API unavailable — pull to refresh');
     }
 
-    // Absorb nonce + cart-token from response headers for future POSTs.
-    await StoreCartApiService.instance.absorbResponseHeaders(res);
-
-    final Map<String, dynamic> data;
-    try {
-      data = jsonDecode(res.body) as Map<String, dynamic>;
-    } catch (e) {
-      throw Exception('[WooCart] JSON parse failed: $e');
-    }
+    final data = remote.data!;
+    await StoreCartApiService.instance.absorbCartSessionFromCartJson(data);
 
     final items = cartItemsFromStoreCartJson(data);
     final snapshot = StoreCartApiSnapshot.fromCartJson(data);

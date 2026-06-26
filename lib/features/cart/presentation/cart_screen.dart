@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
+import '../data/cart_session_refresh.dart';
 import '../domain/cart_item.dart';
 import '../../catalog/domain/product.dart';
 import '../data/store_cart_snapshot.dart';
@@ -154,9 +155,7 @@ class _CartScreenBody extends ConsumerWidget {
   /// Pull-to-refresh and app-bar refresh: re-sync JWT/cookies then fetch live cart.
   static Future<void> _onRefreshCart(WidgetRef ref) async {
     if (AuthService.instance.isSignedIn) {
-      await AuthService.instance.ensureValidSession();
-      await StoreCartApiService.instance
-          .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+      await refreshCartSession();
       ref.invalidate(wooCartProvider);
       try {
         await ref.read(wooCartProvider.future);
@@ -208,6 +207,19 @@ class _CartScreenBody extends ConsumerWidget {
               child: Text(
                 'Error: $error',
                 style: const TextStyle(fontSize: 12, color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ] else if (!isWholesale && AuthService.instance.isSignedIn) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                'The store API returned an empty cart for this app session. '
+                'Pull down to refresh, or add items here in the app. '
+                'Opening the cart URL in a browser tab is a different session '
+                '(you may see null shipping fields or empty items there).',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 textAlign: TextAlign.center,
               ),
             ),
