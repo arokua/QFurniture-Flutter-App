@@ -20,7 +20,9 @@ import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/product_sync_service.dart';
+import '../../../utils/money_format.dart';
 import '../../../utils/user_facing_errors.dart';
+import '../../../widgets/app_brand_logo.dart';
 import '../domain/product_sku_aliases.dart';
 
 /// Search name, SKU, categories, material, color — not full HTML description (avoids jank/OOM).
@@ -225,31 +227,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             );
           },
         ),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary, // Brand Color
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'Q',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 22,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              'Toys',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+        title: const AppBrandLogo(height: 34),
         centerTitle: true,
         elevation: 0,
         actions: [
@@ -730,6 +708,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      _buildProductSku(product),
+                      if (product.sku?.trim().isNotEmpty == true)
+                        const SizedBox(height: 2),
                       Expanded(
                         child: Align(
                           alignment: Alignment.topLeft,
@@ -768,6 +749,21 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   bool _hidePriceForGuest(Product product) =>
       skuRequiresLoginToViewPrice(product.sku) &&
       !AuthService.instance.isSignedIn;
+
+  Widget _buildProductSku(Product product) {
+    final sku = product.sku?.trim();
+    if (sku == null || sku.isEmpty) return const SizedBox.shrink();
+    return Text(
+      sku,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        color: Colors.grey[600],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
 
   String _discountPercent(Product product) {
     if (!product.onSale ||
@@ -826,7 +822,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '${product.currency} ${sale.toStringAsFixed(2)}',
+              formatStorePrice(sale),
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 15,
@@ -835,7 +831,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             ),
             const SizedBox(width: 6),
             Text(
-              '${product.currency} ${reg.toStringAsFixed(2)}',
+              formatStorePrice(reg),
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.grey[600],
@@ -863,7 +859,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       );
     }
     return Text(
-      '${product.currency} ${product.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
+      formatStorePrice(product.displayCurrentPriceForRole(role)),
       style: TextStyle(
         fontWeight: FontWeight.bold,
         fontSize: 15,
@@ -949,6 +945,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        _buildProductSku(product),
+                        if (product.sku?.trim().isNotEmpty == true)
+                          const SizedBox(height: 2),
                         Text(
                           decodeHtmlEntities(product.name),
                           style: const TextStyle(
@@ -1182,6 +1181,17 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    if (p.sku?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        p.sku!.trim(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     if (priceLocked)
                       Column(
@@ -1213,7 +1223,8 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                       )
                     else
                       Text(
-                        '${p.currency} ${p.displayCurrentPriceForRole(widget.role).toStringAsFixed(2)}',
+                        formatStorePrice(
+                            p.displayCurrentPriceForRole(widget.role)),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 18,

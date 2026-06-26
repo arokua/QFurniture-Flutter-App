@@ -74,6 +74,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   /// Full-screen loading until the target store page has finished loading (checkout flow can take several seconds).
   bool _blockingOverlay = true;
   Timer? _overlayFailsafeTimer;
+  final List<Timer> _loginPrefillTimers = [];
 
   @override
   void initState() {
@@ -190,18 +191,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               if (!_autoLoginSubmitted) {
                 if (await _verifyWebViewSession()) {
                   _autoLoginSubmitted = true;
+                  _cancelLoginPrefillTimers();
                   return;
                 }
-                if (await _pageHasCaptchaChallenge()) {
-                  if (kDebugMode) {
-                    debugPrint(
-                      '[StoreWebView] captcha on page — prefilling credentials',
-                    );
-                  }
-                  await _prefillWooCommerceLoginCredentials();
-                  return;
-                }
-                await _submitWooCommerceLoginIfNeeded();
+                await _attemptLoginFormAssistance(url);
                 if (!_addFlowStarted &&
                     _addQueue.isNotEmpty &&
                     _autoLoginSubmitted) {
@@ -230,7 +223,91 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   @override
   void dispose() {
     _overlayFailsafeTimer?.cancel();
+    _cancelLoginPrefillTimers();
     super.dispose();
+  }
+
+  void _cancelLoginPrefillTimers() {
+    for (final t in _loginPrefillTimers) {
+      t.cancel();
+    }
+    _loginPrefillTimers.clear();
+  }
+
+  /// Cart checkout, My account, order history, etc. — login form or CF challenge.
+  bool _urlLooksLikeStoreLogin(String url) {
+    final parsed = Uri.tryParse(url);
+    if (parsed == null) return false;
+    final host = parsed.host.toLowerCase();
+    final path = parsed.path.toLowerCase();
+    if (host.contains('challenges.cloudflare')) return true;
+    if (!host.contains('qtoys')) return false;
+    if (path.contains('my-account')) {
+      final action = parsed.queryParameters['action']?.toLowerCase();
+      if (action == 'login' || path.contains('login')) return true;
+    }
+    if (path.contains('wp-login.php')) return true;
+    return false;
+  }
+
+  Future<void> _attemptLoginFormAssistance(String pageUrl) async {
+    if (!widget.attemptWebLogin || _autoLoginSubmitted) return;
+    if (!AuthService.instance.hasWebLoginCredentials) return;
+
+    final hasCaptcha = await _pageHasCaptchaChallenge();
+    final hasForm = await _pageHasLoginForm();
+    final onLoginUrl = _urlLooksLikeStoreLogin(pageUrl);
+
+    if (!hasCaptcha && !hasForm && !onLoginUrl) return;
+
+    await _prefillWooCommerceLoginCredentials();
+
+    if (hasCaptcha || onLoginUrl) {
+      _scheduleLoginPrefillRetries();
+      if (hasCaptcha) return;
+    }
+
+    if (hasForm) {
+      await _submitWooCommerceLoginIfNeeded();
+    }
+  }
+
+  void _scheduleLoginPrefillRetries() {
+    _cancelLoginPrefillTimers();
+    for (final delayMs in [600, 1400, 2800, 4500]) {
+      _loginPrefillTimers.add(
+        Timer(Duration(milliseconds: delayMs), () async {
+          if (!mounted || _autoLoginSubmitted) return;
+          if (await _verifyWebViewSession()) {
+            _autoLoginSubmitted = true;
+            _cancelLoginPrefillTimers();
+            return;
+          }
+          await _prefillWooCommerceLoginCredentials();
+          if (!await _pageHasCaptchaChallenge() &&
+              await _pageHasLoginForm()) {
+            await _submitWooCommerceLoginIfNeeded();
+            _cancelLoginPrefillTimers();
+          }
+        }),
+      );
+    }
+  }
+
+  Future<bool> _pageHasLoginForm() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult('''
+(function() {
+  if (document.querySelector('form.woocommerce-form-login')) return 'yes';
+  if (document.querySelector('form.login input[name="username"], form.login input[name="log"]')) return 'yes';
+  if (document.querySelector('#username') && document.querySelector('#password')) return 'yes';
+  return 'no';
+})()
+''');
+      return result.toString().replaceAll('"', '').trim() == 'yes';
+    } catch (_) {
+      return false;
+    }
   }
 
   static String _normalizePath(String path) {
@@ -364,6 +441,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       ),
     );
     _autoLoginSubmitted = false;
+    _scheduleLoginPrefillRetries();
   }
 
   Future<void> _resetWebViewCookiesForAuth() async {
@@ -498,6 +576,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
         ),
       );
       _autoLoginSubmitted = false;
+      _scheduleLoginPrefillRetries();
       return;
     }
     _autoLoginSubmitted = true;

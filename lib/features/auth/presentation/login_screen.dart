@@ -6,6 +6,7 @@ import '../../../config/store_cart_api_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/product_sync_service.dart';
+import '../../../widgets/app_brand_logo.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -81,16 +82,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // Logo
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Image.asset(
-                  'assets/data/QIcon2.png',
-                  width: 100,
-                  height: 100,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => Icon(Icons.shopping_bag, size: 80, color: cs.primary),
-                ),
-              ),
+              const AppBrandLogo(height: 100, borderRadius: 20),
               const SizedBox(height: 32),
               Text(
                 'Partner sign in',

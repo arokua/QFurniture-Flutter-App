@@ -12,6 +12,7 @@ import '../../catalog/domain/product.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
 import '../../../providers.dart';
+import '../../../utils/money_format.dart';
 
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
@@ -246,6 +247,7 @@ class _CartScreenBody extends ConsumerWidget {
     required StoreCartApiSnapshot snap,
     required bool isWholesale,
   }) {
+    final skuById = ref.watch(catalogSkuByProductIdProvider).valueOrNull ?? const {};
     return Scaffold(
       appBar: AppBar(
         title: Text('Cart (${snap.lines.length} item${snap.lines.length == 1 ? '' : 's'})'),
@@ -288,7 +290,7 @@ class _CartScreenBody extends ConsumerWidget {
                 return _CartLineCard(
                   productId: line.productId,
                   name: line.name,
-                  sku: line.sku,
+                  sku: line.sku ?? skuById[line.productId],
                   quantity: line.quantity,
                   unitPriceDisplay: line.formattedUnitPrice,
                   lineTotalDisplay: line.formattedLineTotal,
@@ -367,8 +369,6 @@ class _GuestCartScaffold extends ConsumerWidget {
               (line.product!.displayCurrentPriceForRole(null) *
                   line.item.quantity),
         );
-        final currency =
-            validLines.isNotEmpty ? validLines.first.product!.currency : 'AUD';
 
         return Scaffold(
           appBar: AppBar(
@@ -418,10 +418,8 @@ class _GuestCartScaffold extends ConsumerWidget {
                       name: product.name,
                       sku: product.sku,
                       quantity: item.quantity,
-                      unitPriceDisplay:
-                          '${product.currency} ${unit.toStringAsFixed(2)}',
-                      lineTotalDisplay:
-                          '${product.currency} ${lineTotal.toStringAsFixed(2)}',
+                      unitPriceDisplay: formatStorePrice(unit),
+                      lineTotalDisplay: formatStorePrice(lineTotal),
                       imageUrl: product.primaryImage.startsWith('http')
                           ? product.primaryImage
                           : null,
@@ -440,7 +438,7 @@ class _GuestCartScaffold extends ConsumerWidget {
                 ),
               ),
               _GuestCartSummary(
-                totalDisplay: '$currency ${total.toStringAsFixed(2)}',
+                totalDisplay: formatStorePrice(total),
               ),
             ],
           ),
@@ -605,19 +603,20 @@ class _CartLineCardState extends State<_CartLineCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
+                    'SKU: ${(widget.sku != null && widget.sku!.isNotEmpty) ? widget.sku! : widget.productId}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
                     widget.name,
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (widget.sku != null && widget.sku!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        'SKU: ${widget.sku}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                      ),
-                    ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -776,7 +775,6 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
     final moqMet = moqErrors.isEmpty;
 
     double clientTotal = 0;
-    String currency = 'AUD';
     if (widget.snapshot != null) {
       for (final l in widget.snapshot!.lines) {
         final minor = l.lineTotalMinor ??
@@ -787,14 +785,13 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
         }
         clientTotal += minor / d;
       }
-      currency = tv?.currencyCode ?? currency;
     }
 
     final useStoreApi = tv != null;
     final titleLeft = useStoreApi ? 'Total' : 'Subtotal';
     final amountRight = useStoreApi && tv.formattedTotal != null
         ? tv.formattedTotal!
-        : '$currency ${clientTotal.toStringAsFixed(2)}';
+        : formatStorePrice(clientTotal);
 
     return Container(
       padding: const EdgeInsets.all(20),

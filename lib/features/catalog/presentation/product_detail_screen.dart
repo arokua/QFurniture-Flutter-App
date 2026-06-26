@@ -21,6 +21,7 @@ import '../../cart/data/woo_cart_provider.dart';
 import '../domain/product.dart';
 import '../domain/product_pricing_policy.dart';
 import '../../../utils/user_facing_errors.dart';
+import '../../../utils/money_format.dart';
 
 class ProductDetailScreen extends ConsumerStatefulWidget {
   final int productId;
@@ -288,7 +289,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${p.currency} ${v.priceForRole(role).toStringAsFixed(2)}',
+                        formatStorePrice(v.priceForRole(role)),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: v.inStock
@@ -612,14 +613,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         runSpacing: 8,
         children: [
           Text(
-            '${p.currency} ${sale.toStringAsFixed(2)}',
+            formatStorePrice(sale),
             style: theme.textTheme.headlineMedium?.copyWith(
               fontWeight: FontWeight.bold,
               color: theme.colorScheme.primary,
             ),
           ),
           Text(
-            '${p.currency} ${reg.toStringAsFixed(2)}',
+            formatStorePrice(reg),
             style: theme.textTheme.titleMedium?.copyWith(
               color: Colors.grey[600],
               decoration: TextDecoration.lineThrough,
@@ -644,7 +645,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       );
     }
     return Text(
-      '${p.currency} ${p.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
+      formatStorePrice(p.displayCurrentPriceForRole(role)),
       style: theme.textTheme.headlineMedium?.copyWith(
         fontWeight: FontWeight.bold,
         color: theme.colorScheme.primary,

@@ -10,6 +10,7 @@ import '../../../services/auth_service.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
+import '../../../utils/money_format.dart';
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
@@ -168,7 +169,8 @@ class _FavoriteProductTile extends StatelessWidget {
                         final role =
                             AuthService.instance.currentSession?.role;
                         return Text(
-                          '${product.currency} ${product.displayCurrentPriceForRole(role).toStringAsFixed(2)}',
+                          formatStorePrice(
+                              product.displayCurrentPriceForRole(role)),
                           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.bold,

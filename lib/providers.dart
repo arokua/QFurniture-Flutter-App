@@ -9,3 +9,15 @@ import 'features/catalog/data/product_repository.dart';
 final productRepoProvider = Provider<ProductRepository>(
   (ref) => ProductRepository(ProductLocalDataSource(), ProductRemoteDataSource()),
 );
+
+/// Product id → SKU from the on-device catalogue (for cart lines when the API omits SKU).
+final catalogSkuByProductIdProvider =
+    FutureProvider<Map<int, String>>((ref) async {
+  final products = await ref.watch(productRepoProvider).getAll();
+  return {
+    for (final p in products)
+      p.id: (p.sku != null && p.sku!.trim().isNotEmpty)
+          ? p.sku!.trim()
+          : '${p.id}',
+  };
+});

@@ -123,8 +123,8 @@ class StoreCartApiSnapshot {
       // Name
       final name = (e['name'] ?? e['short_description'] ?? '').toString().trim();
 
-      // SKU
-      final sku = e['sku']?.toString().trim();
+      // SKU (Store API may omit top-level sku; check meta/extensions too)
+      final sku = _parseLineSku(e);
 
       // Prices block
       final prices = e['prices'];
@@ -182,5 +182,33 @@ class StoreCartApiSnapshot {
     }
 
     return StoreCartApiSnapshot(totalsView: totals, lines: lines, errors: parsedErrors);
+  }
+
+  static String? _parseLineSku(Map<String, dynamic> e) {
+    final direct = e['sku']?.toString().trim();
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final meta = e['meta_data'];
+    if (meta is List) {
+      for (final m in meta) {
+        if (m is! Map) continue;
+        final key = m['key']?.toString().toLowerCase();
+        if (key == 'sku' || key == '_sku') {
+          final v = m['value']?.toString().trim();
+          if (v != null && v.isNotEmpty) return v;
+        }
+      }
+    }
+
+    final extensions = e['extensions'];
+    if (extensions is Map) {
+      final woo = extensions['woocommerce'];
+      if (woo is Map) {
+        final v = woo['sku']?.toString().trim();
+        if (v != null && v.isNotEmpty) return v;
+      }
+    }
+
+    return null;
   }
 }
