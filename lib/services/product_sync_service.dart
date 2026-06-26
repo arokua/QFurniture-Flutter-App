@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_config.dart';
 import '../features/catalog/domain/role_pricing.dart';
@@ -19,6 +22,7 @@ class ProductSyncService extends ChangeNotifier {
   static final ProductSyncService instance = ProductSyncService._();
 
   static const String _cacheKey = 'qf_product_cache_v2';
+  static const String _cacheFileName = 'qf_product_cache_v2.json';
   static const String _cacheTimestampKey = 'qf_product_cache_ts_v2';
   static const int _cacheTtlHours = 12;
   static const int _backgroundRefreshHours = 2;
@@ -68,7 +72,7 @@ class ProductSyncService extends ChangeNotifier {
   Future<void> ensureCatalogLoaded({bool force = false}) async {
     if (_syncInFlight && !force) return;
     final prefs = await SharedPreferences.getInstance();
-    final cachedJson = prefs.getString(_cacheKey);
+    final cachedJson = await _readCacheJson(prefs);
     final cachedTs = prefs.getInt(_cacheTimestampKey) ?? 0;
     final ageHours =
         (DateTime.now().millisecondsSinceEpoch - cachedTs) / (1000 * 3600);
@@ -109,7 +113,7 @@ class ProductSyncService extends ChangeNotifier {
   /// Returns the best available product JSON list (may be partial while syncing).
   Future<List<Map<String, dynamic>>> getProducts() async {
     final prefs = await SharedPreferences.getInstance();
-    final cachedJson = prefs.getString(_cacheKey);
+    final cachedJson = await _readCacheJson(prefs);
 
     if (cachedJson != null) {
       final list = _decode(cachedJson);
@@ -141,8 +145,7 @@ class ProductSyncService extends ChangeNotifier {
 
   Future<void> forceRefresh() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_cacheKey);
-    await prefs.remove(_cacheTimestampKey);
+    await _deleteCacheFiles(prefs);
     _initialBatchReady = false;
     _fullCatalogReady = false;
     await _runPhasedSync(prefs, force: true);
@@ -150,8 +153,7 @@ class ProductSyncService extends ChangeNotifier {
 
   Future<void> clearCache() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_cacheKey);
-    await prefs.remove(_cacheTimestampKey);
+    await _deleteCacheFiles(prefs);
     _initialBatchReady = false;
     _fullCatalogReady = false;
     _loadedCount = 0;
@@ -240,7 +242,7 @@ class ProductSyncService extends ChangeNotifier {
       _fullCatalogReady = true;
       _setStatus('Catalogue ready ($_loadedCount products)');
     } catch (_) {
-      final cachedJson = prefs.getString(_cacheKey);
+      final cachedJson = await _readCacheJson(prefs);
       if (cachedJson != null) {
         final list = _decode(cachedJson);
         _loadedCount = list.length;
@@ -277,7 +279,7 @@ class ProductSyncService extends ChangeNotifier {
       _setStatus('Refreshing stock & prices…');
       notifyListeners();
       try {
-        final cachedJson = prefs.getString(_cacheKey);
+        final cachedJson = await _readCacheJson(prefs);
         final cached = cachedJson != null ? _decode(cachedJson) : <Map<String, dynamic>>[];
         final byId = <int, Map<String, dynamic>>{};
         for (final p in cached) {
@@ -640,11 +642,61 @@ class ProductSyncService extends ChangeNotifier {
     return null;
   }
 
+  Future<File> _cacheFile() async {
+    final docs = await getApplicationDocumentsDirectory();
+    return File('${docs.path}/$_cacheFileName');
+  }
+
+  /// Product JSON lives on disk — iOS UserDefaults rejects blobs >= 4 MB.
+  Future<String?> _readCacheJson(SharedPreferences prefs) async {
+    try {
+      final file = await _cacheFile();
+      if (await file.exists()) {
+        final text = await file.readAsString();
+        if (text.isNotEmpty) return text;
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[ProductSync] file cache read error: $e');
+    }
+
+    // One-time migration from legacy SharedPreferences storage.
+    final legacy = prefs.getString(_cacheKey);
+    if (legacy != null && legacy.isNotEmpty) {
+      try {
+        final file = await _cacheFile();
+        await file.writeAsString(legacy, flush: true);
+        await prefs.remove(_cacheKey);
+        if (kDebugMode) {
+          debugPrint('[ProductSync] migrated catalog cache from prefs to file');
+        }
+        return legacy;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[ProductSync] prefs→file migration failed: $e');
+        }
+        return legacy;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _deleteCacheFiles(SharedPreferences prefs) async {
+    await prefs.remove(_cacheKey);
+    await prefs.remove(_cacheTimestampKey);
+    try {
+      final file = await _cacheFile();
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   Future<void> _saveCache(
     SharedPreferences prefs,
     List<Map<String, dynamic>> products,
   ) async {
-    await prefs.setString(_cacheKey, jsonEncode(products));
+    final encoded = jsonEncode(products);
+    final file = await _cacheFile();
+    await file.writeAsString(encoded, flush: true);
+    await prefs.remove(_cacheKey);
     await prefs.setInt(
       _cacheTimestampKey,
       DateTime.now().millisecondsSinceEpoch,

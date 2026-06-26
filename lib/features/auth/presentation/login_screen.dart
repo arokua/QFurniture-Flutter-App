@@ -48,20 +48,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       password: password,
     );
 
-    if (mounted) {
-      setState(() => _isLoading = false);
-      if (result.isSuccess) {
-        await StoreCartApiService.instance
-            .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
-        // Sync local cart to Woo Store API before any WebView pulls an empty logged-in cart.
-        await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
-        if (!mounted) return;
-        ProductSyncService.instance.ensureCatalogLoaded(force: true).ignore();
-        context.go(AppRoutes.home);
-      } else {
-        setState(() => _error = result.errorMessage);
-      }
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (!result.isSuccess) {
+      setState(() => _error = result.errorMessage);
+      return;
     }
+
+    await StoreCartApiService.instance
+        .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+    if (!mounted) return;
+
+    await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();
+    if (!mounted) return;
+
+    ProductSyncService.instance.ensureCatalogLoaded(force: true).ignore();
+    context.go(AppRoutes.home);
   }
 
   @override

@@ -440,6 +440,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 return RefreshIndicator(
                   onRefresh: () async {
                     await ProductSyncService.instance.forceRefresh();
+                    if (!mounted) return;
                     ref.read(refreshTriggerProvider.notifier).state++;
                   },
                   child: allProductsAsync.when(

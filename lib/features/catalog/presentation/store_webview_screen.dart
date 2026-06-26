@@ -195,9 +195,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
                 if (await _pageHasCaptchaChallenge()) {
                   if (kDebugMode) {
                     debugPrint(
-                      '[StoreWebView] captcha on page — skip auto form submit',
+                      '[StoreWebView] captcha on page — prefilling credentials',
                     );
                   }
+                  await _prefillWooCommerceLoginCredentials();
                   return;
                 }
                 await _submitWooCommerceLoginIfNeeded();
@@ -374,7 +375,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   Future<void> _establishWebSessionAndLoadTarget() async {
     await AuthService.instance.ensureValidSession();
-    await _resetWebViewCookiesForAuth();
+    // Keep Cloudflare clearance cookies — clearing the jar triggers a new
+    // Turnstile challenge on every subsequent WebView open.
+    await _injectStoreCartCookies();
 
     if (await _startCodeNavigationBridge()) return;
 
@@ -390,8 +393,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       return;
     }
 
-    // Last resort: storefront page + JS POST bridge (same-origin, no REST page).
-    await _controller.loadRequest(Uri.parse('$kStoreBaseUrl/'));
+    // Session bridge failed — storefront login with credential prefill.
+    await _fallbackToFormLoginOrTarget();
   }
 
   Future<void> _injectCookiesAndLoad() async {
@@ -454,9 +457,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
     if (kDebugMode) {
       debugPrint(
-        '[StoreWebView] bridge did not establish session — form login fallback',
+        '[StoreWebView] bridge did not establish session — login fallback',
       );
     }
+    await _resetWebViewCookiesForAuth();
     await _fallbackToFormLoginOrTarget();
   }
 
@@ -553,6 +557,32 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       return text == 'yes' || text == 'maybe';
     } catch (_) {
       return false;
+    }
+  }
+
+  Future<void> _prefillWooCommerceLoginCredentials() async {
+    final email = AuthService.instance.webLoginEmail;
+    final password = AuthService.instance.webLoginPassword;
+    if (email == null || password == null) return;
+    final js = '''
+(function() {
+  var f = document.querySelector('form.woocommerce-form-login');
+  if (!f) f = document.querySelector('form.login');
+  if (!f) return 'no-login-form';
+  var u = f.querySelector('input[name="username"]') || f.querySelector('input[name="log"]') || document.querySelector('#username');
+  var p = f.querySelector('input[name="password"]') || f.querySelector('input[name="pwd"]') || document.querySelector('#password');
+  if (!u || !p) return 'no-login-form';
+  u.value = '${_escapeJs(email)}';
+  p.value = '${_escapeJs(password)}';
+  try { u.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+  try { p.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+  return 'prefilled';
+})();
+''';
+    try {
+      await _controller.runJavaScriptReturningResult(js);
+    } catch (e) {
+      debugPrint('WebView login prefill error: $e');
     }
   }
 

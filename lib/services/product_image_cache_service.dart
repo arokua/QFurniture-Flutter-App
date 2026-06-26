@@ -52,7 +52,17 @@ class ProductImageCacheService extends ChangeNotifier {
     final key = _key(productId, imageIndex);
     if (!_localKeys.contains(key)) return null;
     final path = _localFilePath(productId, imageIndex);
-    return path.isEmpty ? null : path;
+    if (path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (!file.existsSync() || file.lengthSync() < 64) {
+        _localKeys.remove(key);
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+    return path;
   }
 
   /// Whether display should prefer device storage (indices 0–4).
@@ -142,23 +152,30 @@ class ProductImageCacheService extends ChangeNotifier {
     int productId,
     int index,
   ) async {
-    try {
-      final response = await http
-          .get(Uri.parse(url), headers: {'User-Agent': kAppUserAgent})
-          .timeout(const Duration(seconds: 45));
-      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        return false;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
       }
-      final ext = extensionFromPath(url);
-      final path =
-          '$dirPath${Platform.pathSeparator}$index.$ext';
-      await File(path).writeAsBytes(response.bodyBytes, flush: true);
-      _localKeys.add(_key(productId, index));
-      return true;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[ProductImageCache] download failed: $e');
-      return false;
+      try {
+        final response = await http
+            .get(Uri.parse(url), headers: {'User-Agent': kAppUserAgent})
+            .timeout(const Duration(seconds: 45));
+        if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+          continue;
+        }
+        final ext = extensionFromPath(url);
+        final path =
+            '$dirPath${Platform.pathSeparator}$index.$ext';
+        await File(path).writeAsBytes(response.bodyBytes, flush: true);
+        _localKeys.add(_key(productId, index));
+        return true;
+      } catch (e) {
+        if (kDebugMode && attempt == 2) {
+          debugPrint('[ProductImageCache] download failed: $e');
+        }
+      }
     }
+    return false;
   }
 
   List<String> _imageUrlsFromMap(Map<String, dynamic> map) {
