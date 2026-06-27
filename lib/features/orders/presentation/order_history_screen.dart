@@ -16,29 +16,51 @@ import '../../cart/data/woo_cart_provider.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
 import '../domain/woo_order_summary.dart';
 
+class OrderHistoryLoadResult {
+  const OrderHistoryLoadResult({
+    required this.orders,
+    this.webViewFallback = false,
+  });
+
+  final List<WooOrderSummary> orders;
+  final bool webViewFallback;
+}
+
 final orderHistoryProvider =
-    FutureProvider.autoDispose<List<WooOrderSummary>>((ref) async {
+    FutureProvider.autoDispose<OrderHistoryLoadResult>((ref) async {
   final auth = AuthService.instance;
   final s = auth.currentSession;
   final token = s?.token;
-  if (token == null || token.isEmpty) return const [];
+  if (token == null || token.isEmpty) {
+    return const OrderHistoryLoadResult(orders: []);
+  }
+
+  final qtoys = await WooCommerceRestApi.instance.fetchOrdersViaQtoysJwt(token);
+  if (qtoys.reached) {
+    if (kDebugMode) {
+      debugPrint('[OrderHistory] qtoys/my-orders → ${qtoys.orders.length} orders');
+    }
+    return OrderHistoryLoadResult(orders: qtoys.orders);
+  }
 
   final cid =
       s?.customerId ?? await auth.ensureCustomerIdForCurrentSession(force: true);
   if (cid == null) {
-    throw Exception(
-      'Could not resolve your store customer account. Try signing out and back in.',
-    );
+    if (kDebugMode) {
+      debugPrint('[OrderHistory] customer id unresolved — WebView fallback');
+    }
+    return const OrderHistoryLoadResult(orders: [], webViewFallback: true);
   }
 
   if (kDebugMode) {
-    debugPrint('[OrderHistory] fetching orders for customerId=$cid');
+    debugPrint('[OrderHistory] fetching wc/v3 orders for customerId=$cid');
   }
 
-  return WooCommerceRestApi.instance.fetchCustomerOrders(
+  final orders = await WooCommerceRestApi.instance.fetchCustomerOrders(
     jwt: token,
     customerId: cid,
   );
+  return OrderHistoryLoadResult(orders: orders);
 });
 
 Future<void> reorderFromOrder(
@@ -48,7 +70,8 @@ Future<void> reorderFromOrder(
 ) async {
   final session = AuthService.instance.currentSession;
   final token = session?.token;
-  final cid = session?.customerId;
+  var cid = session?.customerId;
+  cid ??= await AuthService.instance.ensureCustomerIdForCurrentSession();
   if (token == null || token.isEmpty || cid == null) return;
 
   WooOrderSummary detail = order;
@@ -164,6 +187,15 @@ Future<void> reorderFromOrder(
   }
 }
 
+void openOrderHistoryWebView(BuildContext context) {
+  StoreWebViewScreen.push(
+    context,
+    storeMyAccountOrdersUrl,
+    attemptWebLogin: AuthService.instance.currentSession != null,
+    useMobileLayout: true,
+  );
+}
+
 class OrderHistoryScreen extends ConsumerWidget {
   const OrderHistoryScreen({super.key});
 
@@ -176,6 +208,14 @@ class OrderHistoryScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Order history'),
         elevation: 0,
+        actions: [
+          if (session != null)
+            IconButton(
+              tooltip: 'View on website',
+              icon: const Icon(Icons.open_in_browser_outlined),
+              onPressed: () => openOrderHistoryWebView(context),
+            ),
+        ],
       ),
       body: (session == null)
           ? Center(
@@ -195,9 +235,26 @@ class OrderHistoryScreen extends ConsumerWidget {
               },
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) =>
-                    Center(child: Text('Could not load orders: $e')),
-                data: (orders) {
+                error: (e, _) => _OrderHistoryFallback(
+                  message: 'Could not load orders: $e',
+                  onOpenWebView: () => openOrderHistoryWebView(context),
+                ),
+                data: (result) {
+                  if (result.webViewFallback) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        _OrderHistoryFallback(
+                          message:
+                              'We could not link your account for in-app order history. '
+                              'You can still view orders on the store website.',
+                          onOpenWebView: () => openOrderHistoryWebView(context),
+                        ),
+                      ],
+                    );
+                  }
+
+                  final orders = result.orders;
                   if (orders.isEmpty) {
                     return ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -265,6 +322,47 @@ class OrderHistoryScreen extends ConsumerWidget {
                 },
               ),
             ),
+    );
+  }
+}
+
+class _OrderHistoryFallback extends StatelessWidget {
+  const _OrderHistoryFallback({
+    required this.message,
+    required this.onOpenWebView,
+  });
+
+  final String message;
+  final VoidCallback onOpenWebView;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.receipt_long_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onOpenWebView,
+              icon: const Icon(Icons.open_in_browser_outlined),
+              label: const Text('View orders on website'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

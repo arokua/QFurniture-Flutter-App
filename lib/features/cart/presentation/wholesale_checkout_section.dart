@@ -52,6 +52,8 @@ class _WholesaleCheckoutSectionState
       return;
     }
 
+    final billingEmail = await AuthService.instance.resolvedAccountEmail();
+
     final lines = widget.snapshot.lines
         .map((l) => (productId: l.productId, quantity: l.quantity))
         .where((e) => e.productId > 0 && e.quantity > 0)
@@ -76,7 +78,7 @@ class _WholesaleCheckoutSectionState
         lineItems: lines,
         paymentMethod: payment.method,
         paymentMethodTitle: payment.title,
-        billingEmail: session?.email ?? 'unknownEmail@email.com',
+        billingEmail: billingEmail,
       );
 
       if (!mounted) return;

@@ -120,10 +120,20 @@ String get storeLostPasswordUrl =>
 String storeOrderViewUrl(int orderId) =>
     '$kStoreBaseUrl$kStoreMyAccountPath/view-order/$orderId/';
 
+/// Order list in WooCommerce my account (WebView fallback when native API fails).
+String get storeMyAccountOrdersUrl =>
+    '$kStoreBaseUrl$kStoreMyAccountPath/orders/';
+
 /// Wholesale (B2B) minimum order — first completed order uses [kWholesaleMinimumFirstOrderAud],
 /// subsequent orders use [kWholesaleMinimumReturningOrderAud] (enforced in cart before checkout).
 const double kWholesaleMinimumFirstOrderAud = 500.0;
 const double kWholesaleMinimumReturningOrderAud = 350.0;
+
+/// First catalog fetch on cold install: only this category (Store API slug).
+const String kInitialSyncCategorySlug = 'new-arrivals';
+
+/// How many products to pull for that first paint (Store API page size).
+const int kInitialCategoryBatchSize = 48;
 
 /// Master toggle for the native wholesale checkout (invoice/bank-deposit flow).
 /// When `true`, wholesale + wholesale_customer roles get the in-app checkout

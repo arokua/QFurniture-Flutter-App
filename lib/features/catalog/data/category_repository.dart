@@ -89,6 +89,36 @@ class CategoryRepository {
     return buildCategoryTree(flat, allowedRootsOnly: true);
   }
 
+  /// Resolve a Store API category id by slug (cached in memory for the session).
+  static int? _slugIdCache;
+
+  Future<int?> resolveCategoryIdBySlug(String slug) async {
+    if (_slugIdCache != null && slug == kInitialSyncCategorySlug) {
+      return _slugIdCache;
+    }
+    try {
+      final uri = Uri.parse(_categoriesEndpoint).replace(
+        queryParameters: {'slug': slug, 'per_page': '1'},
+      );
+      final res = await http
+          .get(uri, headers: {'User-Agent': kAppUserAgent})
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) return null;
+      final list = jsonDecode(res.body) as List<dynamic>?;
+      if (list == null || list.isEmpty) return null;
+      final first = list.first;
+      if (first is! Map<String, dynamic>) return null;
+      final id = first['id'];
+      final parsed = id is int ? id : int.tryParse('$id');
+      if (parsed != null && parsed > 0 && slug == kInitialSyncCategorySlug) {
+        _slugIdCache = parsed;
+      }
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
   List<Category> _fallbackCategories() {
     return [
       const Category(id: 1, name: 'Toys and Educational Resources', slug: 'toys-and-educational-resources', parent: 0, menuOrder: 10),

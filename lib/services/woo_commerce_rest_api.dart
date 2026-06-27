@@ -128,7 +128,9 @@ class WooCommerceRestApi {
   }
 
   /// JWT-only custom route (qtoys plugin) — lists orders for the signed-in user.
-  Future<List<WooOrderSummary>> _fetchOrdersQtoysJwt(String jwt) async {
+  Future<({List<WooOrderSummary> orders, bool reached})> fetchOrdersViaQtoysJwt(
+    String jwt,
+  ) async {
     final uri = StoreCartApiService.bustCache(Uri.parse(_qtoysOrders));
     try {
       final res = await http
@@ -136,46 +138,55 @@ class WooCommerceRestApi {
           .timeout(const Duration(seconds: 20));
       if (kDebugMode) {
         debugPrint('[WooRest] GET qtoys/my-orders → ${res.statusCode}');
+        if (res.statusCode != 200) {
+          debugPrint(
+            '[WooRest] qtoys body: ${res.body.length > 400 ? res.body.substring(0, 400) : res.body}',
+          );
+        }
       }
-      if (res.statusCode == 404) return const [];
-      if (res.statusCode != 200) return const [];
+      if (res.statusCode != 200) {
+        return (orders: const <WooOrderSummary>[], reached: false);
+      }
       final decoded = jsonDecode(res.body);
       if (decoded is Map && decoded['orders'] is List) {
-        return _parseOrderList(decoded['orders']);
+        return (
+          orders: _parseOrderList(decoded['orders']),
+          reached: true,
+        );
       }
-      return _parseOrderList(decoded);
+      return (orders: _parseOrderList(decoded), reached: true);
     } catch (e) {
       if (kDebugMode) debugPrint('[WooRest] qtoys/my-orders error: $e');
-      return const [];
+      return (orders: const <WooOrderSummary>[], reached: false);
     }
   }
 
   /// Orders placed by this customer (newest first).
   Future<List<WooOrderSummary>> fetchCustomerOrders({
     required String jwt,
-    required int customerId,
+    int? customerId,
     int perPage = 25,
   }) async {
-    // 1) Custom JWT route when deployed on the store.
-    final qtoysOrders = await _fetchOrdersQtoysJwt(jwt);
-    if (qtoysOrders.isNotEmpty) return qtoysOrders;
+    // 1) Custom JWT route when deployed on the store (no customer id required).
+    final qtoys = await fetchOrdersViaQtoysJwt(jwt);
+    if (qtoys.reached) return qtoys.orders;
 
-    // 2) Standard wc/v3 — try the resolved customer id, then without status filter.
-    for (final cid in {customerId}) {
-      final res = await _getV3(
-        '/orders',
-        query: {
-          'customer': '$cid',
-          'per_page': '$perPage',
-          'orderby': 'date',
-          'order': 'desc',
-        },
-        jwt: jwt,
-      );
-      if (res.statusCode == 200) {
-        final orders = _parseOrderList(jsonDecode(res.body));
-        if (orders.isNotEmpty) return orders;
-      }
+    if (customerId == null) return const [];
+
+    // 2) Standard wc/v3 — try the resolved customer id.
+    final res = await _getV3(
+      '/orders',
+      query: {
+        'customer': '$customerId',
+        'per_page': '$perPage',
+        'orderby': 'date',
+        'order': 'desc',
+      },
+      jwt: jwt,
+    );
+    if (res.statusCode == 200) {
+      final orders = _parseOrderList(jsonDecode(res.body));
+      if (orders.isNotEmpty) return orders;
     }
 
     if (kDebugMode) {
@@ -251,8 +262,10 @@ class WooCommerceRestApi {
                 'quantity': e.quantity,
               })
           .toList(),
-      if (billingEmail != null && billingEmail.isNotEmpty)
-        'billing': {'email': billingEmail},
+      if (billingEmail != null &&
+          billingEmail.trim().isNotEmpty &&
+          billingEmail.contains('@'))
+        'billing': {'email': billingEmail.trim()},
     };
 
     try {

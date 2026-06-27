@@ -202,6 +202,36 @@ class AuthService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Best email for billing and WC lookups (username logins may store a handle, not @).
+  Future<String> resolvedAccountEmail() async {
+    final session = currentSession;
+    if (session == null) return '';
+    if (_looksLikeEmail(session.email)) return session.email.trim();
+
+    final token = session.token?.trim();
+    if (token == null || token.isEmpty) return session.email;
+
+    final jwtPayload = _decodeJwtPayload(token);
+    final resolved = await _emailForCustomerLookup(
+      session: session,
+      token: token,
+      jwtPayload: jwtPayload,
+    );
+    if (resolved != null && _looksLikeEmail(resolved)) {
+      if (resolved != session.email) {
+        await _persist(
+          email: resolved,
+          name: session.displayName,
+          role: session.role,
+          token: token,
+          customerId: session.customerId,
+        );
+      }
+      return resolved;
+    }
+    return session.email;
+  }
+
   /// Ensure signed-in session has a WooCommerce customer id.
   /// Some JWT plugins omit it from token response; resolve lazily from Woo endpoints.
   Future<int?> ensureCustomerIdForCurrentSession({bool force = false}) async {
@@ -213,18 +243,38 @@ class AuthService extends ChangeNotifier {
 
     try {
       final jwtPayload = _decodeJwtPayload(token);
+      var wpUserId = _wpUserIdFromJwtPayload(jwtPayload);
+      if (wpUserId == null) {
+        final me = await _fetchWpUserMe(token);
+        wpUserId = _parseWpUserId(me?['id']);
+      }
+
       Map<String, dynamic>? customer =
-          await _fetchWooCustomerByJwt(token, jwtPayload);
-      customer ??= await _fetchWooCustomerByEmail(session.email);
+          wpUserId != null
+              ? await _fetchWooCustomerByJwt(token, jwtPayload, userId: wpUserId)
+              : null;
+
+      final lookupEmail = await _emailForCustomerLookup(
+        session: session,
+        token: token,
+        jwtPayload: jwtPayload,
+        customer: customer,
+        wpUserId: wpUserId,
+      );
+      if (lookupEmail != null) {
+        customer ??= await _fetchWooCustomerByEmail(lookupEmail);
+      }
+
       final cid = customer?['id'];
-      var customerId = cid is int ? cid : (cid is num ? cid.toInt() : null);
-      // WooCommerce customer id equals WP user id for registered users; use JWT
-      // sub when WC lookup fails so order history / MOQ still work.
-      customerId ??= _wpUserIdFromJwtPayload(jwtPayload);
+      var customerId = _parseWpUserId(cid) ?? wpUserId;
       if (customerId == null) return null;
 
+      final resolvedEmail = _emailFromWooCustomerMap(customer) ??
+          lookupEmail ??
+          (_looksLikeEmail(session.email) ? session.email : session.email);
+
       await _persist(
-        email: session.email,
+        email: resolvedEmail,
         name: session.displayName,
         role: session.role,
         token: token,
@@ -479,8 +529,18 @@ class AuthService extends ChangeNotifier {
 
       if (response.statusCode == 200 && data['token'] != null) {
         final token = data['token'] as String;
-        final userEmail = data['user_email'] as String? ?? email;
-        final displayName = data['user_display_name'] as String? ?? email.split('@').first;
+        final jwtPayload = _decodeJwtPayload(token);
+        var userEmail = (data['user_email'] as String?)?.trim() ?? '';
+        if (!_looksLikeEmail(userEmail)) {
+          userEmail = _emailFromJwtPayload(jwtPayload)?.trim() ?? '';
+        }
+        if (!_looksLikeEmail(userEmail)) {
+          userEmail = email.trim();
+        }
+        final displayName = data['user_display_name'] as String? ??
+            (userEmail.contains('@')
+                ? userEmail.split('@').first
+                : userEmail);
 
         if (kDebugMode) {
           final safe = Map<String, dynamic>.from(data);
@@ -495,7 +555,6 @@ class AuthService extends ChangeNotifier {
         // Role: merge WooCommerce customer + JWT (WP often reports `customer` while meta/JWT has wholesale).
         String role = 'customers';
         int? customerId;
-        final jwtPayload = _decodeJwtPayload(token);
         if (kDebugMode && jwtPayload != null) {
           debugPrint('[Auth] JWT payload (decoded): ${jsonEncode(jwtPayload)}');
         }
@@ -527,13 +586,26 @@ class AuthService extends ChangeNotifier {
         try {
           Map<String, dynamic>? custResult =
               await _fetchWooCustomerByJwt(token, jwtPayload);
-          custResult ??= await _fetchWooCustomerByEmail(userEmail);
+          final loginLookupEmail =
+              _looksLikeEmail(userEmail) ? userEmail : null;
+          if (loginLookupEmail != null) {
+            custResult ??= await _fetchWooCustomerByEmail(loginLookupEmail);
+          }
           if (custResult != null) {
             final fromMap = _roleFromWooCustomerMap(custResult);
             if (fromMap != null && fromMap.isNotEmpty) {
               role = _normalizeStoredRole(fromMap);
             }
-            customerId = custResult['id'] as int?;
+            customerId = _parseWpUserId(custResult['id']);
+            if (!_looksLikeEmail(userEmail)) {
+              userEmail = _emailFromWooCustomerMap(custResult) ??
+                  _emailFromWpUserMap(
+                    wpUserId != null
+                        ? await _fetchWpUserById(token, wpUserId)
+                        : null,
+                  ) ??
+                  userEmail;
+            }
             if (kDebugMode) {
               debugPrint(
                 '[Auth] WC customer resolved: id=$customerId role_field=${custResult['role']} '
@@ -570,6 +642,7 @@ class AuthService extends ChangeNotifier {
           final jr = _normalizeStoredRole(raw);
           role = _pickHigherPriorityRole(role, jr);
         }
+        customerId ??= wpUserId;
         if (kDebugMode) {
           debugPrint('[Auth] Final resolved role for UI: $role');
         }
@@ -734,10 +807,117 @@ class AuthService extends ChangeNotifier {
     if (data is Map<String, dynamic>) {
       final user = data['user'];
       if (user is Map<String, dynamic>) {
-        final id = user['id'];
-        if (id is int) return id;
-        if (id is num) return id.toInt();
+        final id = _parseWpUserId(user['id'] ?? user['ID']);
+        if (id != null) return id;
       }
+    }
+    final sub = _parseWpUserId(payload['sub']);
+    if (sub != null) return sub;
+    return _parseWpUserId(payload['user_id']);
+  }
+
+  static int? _parseWpUserId(dynamic id) {
+    if (id is int) return id;
+    if (id is num) return id.toInt();
+    if (id is String) return int.tryParse(id.trim());
+    return null;
+  }
+
+  static bool _looksLikeEmail(String value) {
+    final s = value.trim();
+    if (s.isEmpty) return false;
+    final at = s.indexOf('@');
+    return at > 0 && s.indexOf('.', at) > at;
+  }
+
+  static String? _emailFromJwtPayload(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+    final data = payload['data'];
+    if (data is Map<String, dynamic>) {
+      final user = data['user'];
+      if (user is Map<String, dynamic>) {
+        for (final key in ['email', 'user_email']) {
+          final e = user[key];
+          if (e is String && e.trim().isNotEmpty) return e.trim();
+        }
+      }
+    }
+    return null;
+  }
+
+  static String? _emailFromWpUserMap(Map<String, dynamic>? user) {
+    if (user == null) return null;
+    final e = user['email'];
+    if (e is String && _looksLikeEmail(e)) return e.trim();
+    return null;
+  }
+
+  static String? _emailFromWooCustomerMap(Map<String, dynamic>? customer) {
+    if (customer == null) return null;
+    final direct = customer['email'];
+    if (direct is String && _looksLikeEmail(direct)) return direct.trim();
+    final billing = customer['billing'];
+    if (billing is Map) {
+      final be = billing['email'];
+      if (be is String && _looksLikeEmail(be)) return be.trim();
+    }
+    return null;
+  }
+
+  Future<String?> _emailForCustomerLookup({
+    required UserSession session,
+    required String token,
+    required Map<String, dynamic>? jwtPayload,
+    Map<String, dynamic>? customer,
+    int? wpUserId,
+  }) async {
+    if (_looksLikeEmail(session.email)) return session.email.trim();
+
+    final fromJwt = _emailFromJwtPayload(jwtPayload);
+    if (fromJwt != null && _looksLikeEmail(fromJwt)) return fromJwt;
+
+    final fromWc = _emailFromWooCustomerMap(customer);
+    if (fromWc != null) return fromWc;
+
+    wpUserId ??= _wpUserIdFromJwtPayload(jwtPayload);
+    if (wpUserId != null) {
+      final wpUser = await _fetchWpUserById(token, wpUserId);
+      final fromWp = _emailFromWpUserMap(wpUser);
+      if (fromWp != null) return fromWp;
+    }
+
+    final me = await _fetchWpUserMe(token);
+    return _emailFromWpUserMap(me);
+  }
+
+  /// Authenticated WP user lookup (`/wp-json/wp/v2/users/me?context=edit`).
+  Future<Map<String, dynamic>?> _fetchWpUserMe(String token) async {
+    final url = Uri.parse('$kStoreBaseUrl/wp-json/wp/v2/users/me')
+        .replace(queryParameters: {'context': 'edit'});
+    try {
+      final response = await http
+          .get(
+            url,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (kDebugMode) {
+        debugPrint(
+          '[Auth] WP GET ${url.path}?context=edit → ${response.statusCode} '
+          'body=${_truncateBody(response.body)}',
+        );
+      }
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) return decoded;
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Auth] WP users/me error: $e');
     }
     return null;
   }
@@ -802,9 +982,10 @@ class AuthService extends ChangeNotifier {
   /// authenticates the request so wp-cerber allows it through.
   Future<Map<String, dynamic>?> _fetchWooCustomerByJwt(
     String token,
-    Map<String, dynamic>? jwtPayload,
-  ) async {
-    final uid = _wpUserIdFromJwtPayload(jwtPayload);
+    Map<String, dynamic>? jwtPayload, {
+    int? userId,
+  }) async {
+    final uid = userId ?? _wpUserIdFromJwtPayload(jwtPayload);
     if (uid == null) return null;
 
     // wc/v3/customers/{id} authenticated with the user's own JWT Bearer.
@@ -924,6 +1105,12 @@ class AuthService extends ChangeNotifier {
   /// Look up a WooCommerce customer by email using user's JWT token.
   /// Requires the current user's JWT to authenticate — no API key needed.
   Future<Map<String, dynamic>?> _fetchWooCustomerByEmail(String email) async {
+    if (!_looksLikeEmail(email)) {
+      if (kDebugMode) {
+        debugPrint('[Auth] WC customers?email= skipped: not an email ($email)');
+      }
+      return null;
+    }
     // Prefer the current user's session token; fall back to site-level JWT from .env.
     final token = (jwtToken?.isNotEmpty == true ? jwtToken : null) ?? kSiteJwtToken;
     if (token.isEmpty) {

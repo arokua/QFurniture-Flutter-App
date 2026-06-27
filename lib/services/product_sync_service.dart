@@ -7,14 +7,15 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_config.dart';
+import '../features/catalog/data/category_repository.dart';
 import '../features/catalog/domain/role_pricing.dart';
 import '../features/catalog/utils/html_utils.dart';
 import 'auth_service.dart';
 import 'product_image_cache_service.dart';
 
 /// WooCommerce Store API product sync with phased download:
-/// 1) Latest [initialSyncBatchSize] products first (fast first paint)
-/// 2) Remaining pages in background (signed-in users only)
+/// 1) [kInitialSyncCategorySlug] products first (fast first paint on fresh install)
+/// 2) Full catalogue in a detached background task (signed-in users only)
 ///
 /// Guests may preview up to [guestPreviewProductLimit] newest products without login.
 class ProductSyncService extends ChangeNotifier {
@@ -31,11 +32,15 @@ class ProductSyncService extends ChangeNotifier {
   /// Checkpoint cache to disk every N pages during background sync.
   static const int _saveEveryPages = 5;
 
-  /// First network batch for quick startup.
-  static const int initialSyncBatchSize = kInitialProductBatchSize;
+  /// First network batch for quick startup (New Arrivals category on cold install).
+  static const int initialSyncBatchSize = kInitialCategoryBatchSize;
 
   /// Unauthenticated catalogue preview cap.
   static const int guestPreviewProductLimit = 30;
+
+  static const Duration _backgroundPageDelay = Duration(milliseconds: 80);
+
+  final CategoryRepository _categoryRepo = CategoryRepository();
 
   static String get _remoteEndpoint =>
       '$kStoreBaseUrl/wp-json/wc/store/v1/products';
@@ -48,6 +53,12 @@ class ProductSyncService extends ChangeNotifier {
   int _loadedCount = 0;
   int? _reportedTotal;
   String? _statusMessage;
+  int? _bootstrapCategoryId;
+  String? _bootstrapCategoryName;
+
+  /// Category used for the first paint on a cold install (when resolved).
+  int? get bootstrapCategoryId => _bootstrapCategoryId;
+  String? get bootstrapCategoryName => _bootstrapCategoryName;
 
   /// Lightweight, high-frequency progress signal for the status strip.
   /// Updated on every page so the UI bar animates WITHOUT forcing the heavy
@@ -64,7 +75,11 @@ class ProductSyncService extends ChangeNotifier {
   String? get statusMessage => _statusMessage;
 
   bool get isBackgroundSyncing =>
-      _isLoadingInitial || (_isSyncingRest && !_fullCatalogReady);
+      _isLoadingInitial || _isSyncingRest;
+
+  /// True while only the bootstrap category batch is cached (full sync still running).
+  bool get isPartialCatalog =>
+      _initialBatchReady && !_fullCatalogReady && AuthService.instance.isSignedIn;
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -130,6 +145,11 @@ class ProductSyncService extends ChangeNotifier {
       ensureCatalogLoaded().ignore();
     }
 
+    // Avoid parsing the 3 MB bundled asset during an active network sync.
+    if (_syncInFlight || _isSyncingRest) {
+      return [];
+    }
+
     try {
       final bundled = await _loadBundledAsset();
       if (bundled.isNotEmpty) {
@@ -188,15 +208,38 @@ class ProductSyncService extends ChangeNotifier {
     _isSyncingRest = false;
     _initialBatchReady = false;
     _fullCatalogReady = false;
-    _setStatus('Loading latest products…');
+    _bootstrapCategoryId = null;
+    _bootstrapCategoryName = null;
+    _setStatus('Loading new arrivals…');
     notifyListeners();
 
     try {
       final signedIn = AuthService.instance.isSignedIn;
-      final initial = await _fetchRemotePage(
-        page: 1,
-        perPage: signedIn ? initialSyncBatchSize : guestPreviewProductLimit,
-      );
+      _RemoteBatch initial;
+
+      if (signedIn) {
+        final categoryId =
+            await _categoryRepo.resolveCategoryIdBySlug(kInitialSyncCategorySlug);
+        if (categoryId != null) {
+          _bootstrapCategoryId = categoryId;
+          _bootstrapCategoryName = 'New Arrivals';
+          initial = await _fetchRemotePage(
+            page: 1,
+            perPage: initialSyncBatchSize,
+            categoryId: categoryId,
+          );
+        } else {
+          initial = await _fetchRemotePage(
+            page: 1,
+            perPage: initialSyncBatchSize,
+          );
+        }
+      } else {
+        initial = await _fetchRemotePage(
+          page: 1,
+          perPage: guestPreviewProductLimit,
+        );
+      }
 
       if (initial.items.isNotEmpty) {
         await _saveCache(prefs, initial.items);
@@ -205,7 +248,7 @@ class ProductSyncService extends ChangeNotifier {
         _initialBatchReady = true;
         _setStatus(
           signedIn
-              ? 'Loaded $_loadedCount products — syncing full catalogue…'
+              ? 'Loaded $_loadedCount new arrivals — syncing full catalogue…'
               : 'Preview: $_loadedCount products (sign in for full catalogue)',
         );
         notifyListeners();
@@ -217,30 +260,17 @@ class ProductSyncService extends ChangeNotifier {
 
       if (!signedIn) {
         _fullCatalogReady = true;
-        _isLoadingInitial = false;
-        notifyListeners();
         return;
       }
 
-      _isLoadingInitial = false;
-      _isSyncingRest = true;
-      notifyListeners();
-
-      // Re-fetch from page 1 at full page size so products 16–100 are not skipped.
-      final rest = await _fetchRemainingAfterInitial(
-        prefs: prefs,
-        existing: initial.items,
-        totalPages: initial.totalPages,
-        total: initial.total,
-      );
-
-      if (rest.isNotEmpty) {
-        await _saveCache(prefs, rest);
-        _loadedCount = rest.length;
-        ProductImageCacheService.instance.enqueueProductMaps(rest);
+      if (initial.items.isEmpty) {
+        _setStatus('Syncing full catalogue…');
       }
-      _fullCatalogReady = true;
-      _setStatus('Catalogue ready ($_loadedCount products)');
+
+      _startBackgroundFullSync(
+        prefs: prefs,
+        seed: initial.items,
+      );
     } catch (_) {
       final cachedJson = await _readCacheJson(prefs);
       if (cachedJson != null) {
@@ -265,10 +295,46 @@ class ProductSyncService extends ChangeNotifier {
       }
     } finally {
       _isLoadingInitial = false;
-      _isSyncingRest = false;
-      _syncInFlight = false;
+      if (!_isSyncingRest) {
+        _syncInFlight = false;
+      }
       notifyListeners();
     }
+  }
+
+  /// Detached full-catalog sync — does not block splash / first navigation.
+  void _startBackgroundFullSync({
+    required SharedPreferences prefs,
+    required List<Map<String, dynamic>> seed,
+  }) {
+    Future.microtask(() async {
+      if (_isSyncingRest) return;
+      _isSyncingRest = true;
+      _syncInFlight = true;
+      notifyListeners();
+      try {
+        final rest = await _fetchRemainingAfterInitial(
+          prefs: prefs,
+          existing: seed,
+        );
+        if (rest.isNotEmpty) {
+          await _saveCache(prefs, rest);
+          _loadedCount = rest.length;
+          ProductImageCacheService.instance.enqueueProductMaps(rest);
+        }
+        _fullCatalogReady = true;
+        _setStatus('Catalogue ready ($_loadedCount products)');
+      } catch (_) {
+        if (_loadedCount > 0) {
+          _fullCatalogReady = true;
+          _setStatus('Showing partial catalogue ($_loadedCount products)');
+        }
+      } finally {
+        _isSyncingRest = false;
+        _syncInFlight = false;
+        notifyListeners();
+      }
+    });
   }
 
   void _refreshFullCatalogInBackground(SharedPreferences prefs) {
@@ -401,8 +467,6 @@ class ProductSyncService extends ChangeNotifier {
   Future<List<Map<String, dynamic>>> _fetchRemainingAfterInitial({
     required SharedPreferences prefs,
     required List<Map<String, dynamic>> existing,
-    required int? totalPages,
-    required int? total,
   }) async {
     final byId = <int, Map<String, dynamic>>{};
     for (final p in existing) {
@@ -411,35 +475,33 @@ class ProductSyncService extends ChangeNotifier {
     }
 
     var page = 1;
-    final maxPages = totalPages ?? 9999;
+    int? maxPages;
+    int? catalogTotal;
 
-    while (page <= maxPages) {
+    while (true) {
       final batch = await _fetchRemotePage(page: page, perPage: _perPage);
       if (batch.items.isEmpty) break;
+      maxPages ??= batch.totalPages;
+      catalogTotal ??= batch.total;
       for (final p in batch.items) {
         final id = p['id'];
         if (id is int) byId[id] = p;
       }
       _loadedCount = byId.length;
-      if (total != null) _reportedTotal = total;
+      if (catalogTotal != null) _reportedTotal = catalogTotal;
 
-      // Lightweight progress only — do NOT notifyListeners() here. Notifying
-      // would invalidate the product provider and re-decode the whole catalog
-      // on every page (heavy on the main isolate → iOS OOM crash).
-      _setStatus('Syncing catalogue… $_loadedCount of ${total ?? '?'}');
-      syncProgress.value = (total != null && total > 0)
-          ? (_loadedCount / total).clamp(0.0, 1.0)
+      _setStatus('Syncing catalogue… $_loadedCount of ${catalogTotal ?? '?'}');
+      syncProgress.value = (catalogTotal != null && catalogTotal > 0)
+          ? (_loadedCount / catalogTotal).clamp(0.0, 1.0)
           : null;
 
-      // Persist a checkpoint occasionally so a killed sync can resume, but
-      // avoid re-encoding the entire (growing) catalogue on every single page.
       if (page % _saveEveryPages == 0) {
         await _saveCache(prefs, byId.values.toList());
       }
-      if (page >= (batch.totalPages ?? page)) break;
+      final lastPage = maxPages ?? batch.totalPages;
+      if (lastPage != null && page >= lastPage) break;
       page++;
-      // Yield to the event loop so UI stays responsive between pages.
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(_backgroundPageDelay);
     }
 
     return byId.values.toList();
@@ -448,13 +510,18 @@ class ProductSyncService extends ChangeNotifier {
   Future<_RemoteBatch> _fetchRemotePage({
     required int page,
     required int perPage,
+    int? categoryId,
   }) async {
-    final uri = Uri.parse(_remoteEndpoint).replace(queryParameters: {
+    final params = <String, String>{
       'page': '$page',
       'per_page': '$perPage',
       'orderby': 'date',
       'order': 'desc',
-    });
+    };
+    if (categoryId != null && categoryId > 0) {
+      params['category'] = '$categoryId';
+    }
+    final uri = Uri.parse(_remoteEndpoint).replace(queryParameters: params);
 
     final response = await http
         .get(uri, headers: {'User-Agent': kAppUserAgent})

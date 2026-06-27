@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Qtoys Mobile App Extensions
  * Description: JWT-authenticated my-orders endpoint for the Qtoys partner app.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Qtoys
  *
  * Deploy alongside qtoys-mobile-session (v1.2+). Provides:
@@ -18,26 +18,67 @@ add_action('rest_api_init', function () {
     register_rest_route('qtoys/v1', '/my-orders', [
         'methods'             => 'GET',
         'callback'            => 'qtoys_rest_my_orders',
-        'permission_callback' => 'qtoys_rest_require_jwt_user',
+        'permission_callback' => '__return_true',
     ]);
 });
 
 /**
- * Allow any authenticated WP user (JWT sets current user).
+ * Resolve WP user id from Bearer JWT (reuses qtoys-mobile-session helpers when present).
  */
-function qtoys_rest_require_jwt_user() {
-    return is_user_logged_in();
+function qtoys_rest_resolve_user_id_from_request(WP_REST_Request $request) {
+    $token = '';
+    if (function_exists('qtoys_jwt_cookie_bridge_token_from_bearer_header')) {
+        $token = qtoys_jwt_cookie_bridge_token_from_bearer_header($request);
+    } else {
+        $auth = $request->get_header('authorization');
+        if ($auth && stripos($auth, 'Bearer ') === 0) {
+            $token = trim(substr($auth, 7));
+        }
+    }
+
+    if ($token === '') {
+        return 0;
+    }
+
+    if (function_exists('qtoys_jwt_cookie_bridge_resolve_user_id_from_token')) {
+        return (int) qtoys_jwt_cookie_bridge_resolve_user_id_from_token($token);
+    }
+
+    // Minimal fallback when session plugin is not loaded.
+    $parts = explode('.', $token);
+    if (count($parts) !== 3) {
+        return 0;
+    }
+    $payload_json = base64_decode(strtr($parts[1], '-_', '+/'));
+    $payload = json_decode($payload_json, true);
+    if (!is_array($payload)) {
+        return 0;
+    }
+    if (isset($payload['data']['user']['id'])) {
+        return (int) $payload['data']['user']['id'];
+    }
+    if (isset($payload['sub'])) {
+        return (int) $payload['sub'];
+    }
+    return 0;
 }
 
 /**
- * List orders for the current user (same data shape as wc/v3/orders items).
+ * List orders for the JWT user (same data shape as wc/v3/orders items).
  */
 function qtoys_rest_my_orders(WP_REST_Request $request) {
-    if (!function_exists('wc_get_orders')) {
-        return new WP_REST_Response([], 200);
+    $user_id = qtoys_rest_resolve_user_id_from_request($request);
+    if ($user_id <= 0) {
+        return new WP_REST_Response([
+            'code'    => 'qtoys_unauthorized',
+            'message' => 'Valid Bearer JWT required.',
+        ], 401);
     }
 
-    $user_id  = get_current_user_id();
+    if (!function_exists('wc_get_orders')) {
+        return new WP_REST_Response(['orders' => []], 200);
+    }
+
     $per_page = min(50, max(1, (int) $request->get_param('per_page') ?: 25));
 
     $orders = wc_get_orders([
