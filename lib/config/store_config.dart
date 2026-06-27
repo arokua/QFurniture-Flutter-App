@@ -130,7 +130,7 @@ const double kWholesaleMinimumFirstOrderAud = 500.0;
 const double kWholesaleMinimumReturningOrderAud = 350.0;
 
 /// First catalog fetch on cold install: only this category (Store API slug).
-const String kInitialSyncCategorySlug = 'new-arrivals';
+const String kInitialSyncCategorySlug = 'whatsnew';
 
 /// How many products to pull for that first paint (Store API page size).
 const int kInitialCategoryBatchSize = 48;

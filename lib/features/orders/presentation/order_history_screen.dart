@@ -258,9 +258,17 @@ class OrderHistoryScreen extends ConsumerWidget {
                   if (orders.isEmpty) {
                     return ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        SizedBox(height: 120),
-                        Center(child: Text('No orders found yet.')),
+                      children: [
+                        const SizedBox(height: 80),
+                        const Center(child: Text('No orders found yet.')),
+                        const SizedBox(height: 16),
+                        Center(
+                          child: OutlinedButton.icon(
+                            onPressed: () => openOrderHistoryWebView(context),
+                            icon: const Icon(Icons.open_in_browser_outlined),
+                            label: const Text('View orders on website'),
+                          ),
+                        ),
                       ],
                     );
                   }
@@ -275,36 +283,68 @@ class OrderHistoryScreen extends ConsumerWidget {
                           .format(o.dateCreated.toLocal());
                       final total = double.tryParse(o.total) ?? 0;
                       return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        clipBehavior: Clip.antiAlias,
+                        child: Theme(
+                          data: Theme.of(context).copyWith(
+                            dividerColor: Colors.transparent,
+                          ),
+                          child: ExpansionTile(
+                            tilePadding:
+                                const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                            childrenPadding:
+                                const EdgeInsets.fromLTRB(16, 0, 8, 12),
+                            title: Text(
+                              'Order #${o.number}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text('$dateStr · ${o.statusLabel}'),
+                            ),
+                            trailing: Text(
+                              formatStorePrice(total),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
                             children: [
-                              ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: Text('Order #${o.number}'),
-                                subtitle: Text('$dateStr · ${o.statusLabel}'),
-                                trailing: Text(
-                                  formatStorePrice(total),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.bold),
+                              if (o.lineItems.isEmpty)
+                                const ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text('Open on website for full details.'),
+                                )
+                              else
+                                ...o.lineItems.map(
+                                  (line) => ListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text(line.name),
+                                    trailing: Text('×${line.quantity}'),
+                                  ),
                                 ),
-                                onTap: () {
-                                  StoreWebViewScreen.push(
-                                    context,
-                                    storeOrderViewUrl(o.id),
-                                    attemptWebLogin:
-                                        AuthService.instance.currentSession !=
-                                            null,
-                                    useMobileLayout: true,
-                                  );
-                                },
-                              ),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
+                                  TextButton.icon(
+                                    icon: const Icon(Icons.open_in_new, size: 18),
+                                    label: const Text('View'),
+                                    onPressed: () {
+                                      StoreWebViewScreen.push(
+                                        context,
+                                        storeOrderViewUrl(o.id),
+                                        attemptWebLogin:
+                                            AuthService.instance
+                                                    .currentSession !=
+                                                null,
+                                        useMobileLayout: true,
+                                      );
+                                    },
+                                  ),
                                   TextButton.icon(
                                     icon: const Icon(Icons.replay, size: 18),
                                     label: const Text('Place same order'),

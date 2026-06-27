@@ -150,13 +150,37 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     super.initState();
     _searchController.text = ref.read(searchQueryProvider);
     ProductSyncService.instance.ensureCatalogLoaded().ignore();
+    ProductSyncService.instance.addListener(_onSyncUpdate);
     if (!AuthService.instance.isSignedIn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ref.read(selectedCategoryProvider.notifier).state = null;
         }
       });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeDefaultToNewArrivals();
+      });
     }
+  }
+
+  void _onSyncUpdate() {
+    if (!mounted) return;
+    _maybeDefaultToNewArrivals();
+  }
+
+  void _maybeDefaultToNewArrivals() {
+    if (!AuthService.instance.isSignedIn) return;
+    if (ref.read(selectedCategoryProvider) != null) return;
+    final sync = ProductSyncService.instance;
+    if (!sync.initialBatchReady) return;
+    final id = sync.bootstrapCategoryId;
+    final name = sync.bootstrapCategoryName;
+    if (id == null && name == null) return;
+    ref.read(selectedCategoryProvider.notifier).state = SelectedCategory(
+      id: id ?? 0,
+      name: name ?? "What's New",
+    );
   }
 
   void _requireSignIn(BuildContext context, {String? message}) {
@@ -174,6 +198,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
   @override
   void dispose() {
+    ProductSyncService.instance.removeListener(_onSyncUpdate);
     _debounce?.cancel();
     _searchController.dispose();
     super.dispose();

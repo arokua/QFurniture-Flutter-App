@@ -210,7 +210,7 @@ class ProductSyncService extends ChangeNotifier {
     _fullCatalogReady = false;
     _bootstrapCategoryId = null;
     _bootstrapCategoryName = null;
-    _setStatus('Loading new arrivals…');
+    _setStatus('Loading latest products…');
     notifyListeners();
 
     try {
@@ -218,15 +218,15 @@ class ProductSyncService extends ChangeNotifier {
       _RemoteBatch initial;
 
       if (signedIn) {
-        final categoryId =
-            await _categoryRepo.resolveCategoryIdBySlug(kInitialSyncCategorySlug);
-        if (categoryId != null) {
-          _bootstrapCategoryId = categoryId;
-          _bootstrapCategoryName = 'New Arrivals';
+        final category = await _categoryRepo
+            .resolveCategoryBySlug(kInitialSyncCategorySlug);
+        if (category != null) {
+          _bootstrapCategoryId = category.id;
+          _bootstrapCategoryName = category.name;
           initial = await _fetchRemotePage(
             page: 1,
             perPage: initialSyncBatchSize,
-            categoryId: categoryId,
+            categoryId: category.id,
           );
         } else {
           initial = await _fetchRemotePage(
@@ -248,7 +248,7 @@ class ProductSyncService extends ChangeNotifier {
         _initialBatchReady = true;
         _setStatus(
           signedIn
-              ? 'Loaded $_loadedCount new arrivals — syncing full catalogue…'
+              ? 'Loaded $_loadedCount in ${_bootstrapCategoryName ?? "What's New"} — syncing full catalogue…'
               : 'Preview: $_loadedCount products (sign in for full catalogue)',
         );
         notifyListeners();

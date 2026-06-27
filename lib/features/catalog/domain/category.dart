@@ -59,6 +59,7 @@ const allowedParentSlugs = {
   'outdoor-furniture',
   'childrens-furniture',
   'children-furniture',
+  'whatsnew',
   'new-arrivals',
   'sales',
   'homewares',
@@ -68,6 +69,22 @@ const allowedParentSlugs = {
   'bundles',
   'by-age-group',
 };
+
+/// Wholesale-only roots — shown for wholesale + wholesale_customer roles only.
+const wholesaleOnlyParentSlugs = {
+  'wholesale_only',
+  'wholesale-only',
+};
+
+/// Root category slugs visible for the signed-in role.
+Set<String> allowedParentSlugsForRole(String? role) {
+  final slugs = Set<String>.from(allowedParentSlugs);
+  final r = role?.toLowerCase() ?? '';
+  if (r == 'wholesale' || r == 'wholesale_customer') {
+    slugs.addAll(wholesaleOnlyParentSlugs);
+  }
+  return slugs;
+}
 
 /// Sidebar/category-tree label override for specific slugs.
 String categorySidebarLabel(Category c) {
@@ -87,7 +104,9 @@ int _compareCategoryOrder(Category a, Category b) {
 List<Category> buildCategoryTree(
   List<Category> flat, {
   bool allowedRootsOnly = true,
+  Set<String>? allowedRootSlugs,
 }) {
+  final allowed = allowedRootSlugs ?? allowedParentSlugs;
   final map = <int, Category>{};
   for (final c in flat) {
     map[c.id] = c.copyWith(children: []);
@@ -102,7 +121,7 @@ List<Category> buildCategoryTree(
   final roots = <Category>[];
   for (final c in flat) {
     if (c.parent != 0) continue;
-    if (allowedRootsOnly && !allowedParentSlugs.contains(c.slug)) continue;
+    if (allowedRootsOnly && !allowed.contains(c.slug)) continue;
     final node = map[c.id];
     if (node != null) roots.add(node);
   }

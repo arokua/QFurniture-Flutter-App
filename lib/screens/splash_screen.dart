@@ -41,7 +41,7 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _navigateWhenReady() async {
     final auth = AuthService.instance;
     // Minimum splash time so the logo doesn't flicker.
-    await Future.delayed(const Duration(milliseconds: 1400));
+    await Future.delayed(const Duration(milliseconds: 900));
 
     // Hard lock: no stored session → login first and foremost.
     if (!auth.isSignedIn) {
@@ -50,10 +50,17 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
-    // Validate/refresh the JWT. Fixes the "after 7 days, invalid token" lockout:
-    // expired tokens are refreshed (or a silent re-login is attempted); only if
-    // everything fails do we drop the user back to the login screen.
-    final sessionOk = await auth.ensureValidSession();
+    // Catalogue bootstrap + session validation in parallel.
+    final sync = ProductSyncService.instance;
+    sync.ensureCatalogLoaded().ignore();
+    final sessionOkFuture = auth.ensureValidSession();
+
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+
+    final sessionOk = await sessionOkFuture;
     if (!mounted) return;
     if (!sessionOk) {
       context.go(AppRoutes.login);
@@ -63,14 +70,6 @@ class _SplashScreenState extends State<SplashScreen>
     // Re-prime Woo cart session cookies after token refresh on cold start.
     await StoreCartApiService.instance
         .bootstrapSessionFromJwt(auth.jwtToken);
-
-    // Signed in: start the phased catalogue sync and wait briefly for batch 1.
-    final sync = ProductSyncService.instance;
-    sync.ensureCatalogLoaded().ignore();
-    final deadline = DateTime.now().add(const Duration(seconds: 6));
-    while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 100));
-    }
 
     if (!mounted) return;
     context.go(AppRoutes.home);

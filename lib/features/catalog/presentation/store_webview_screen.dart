@@ -139,7 +139,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
           onPageFinished: (String url) async {
             try {
               if (widget.useMobileLayout) {
-                await _applyMobileViewport();
+                await _applyMobileLayoutEnhancements();
               }
               // If we are mid-add-to-cart sequence, just continue it.
               if (_adding) {
@@ -236,7 +236,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     _injectCookiesAndLoad();
   }
 
-  Future<void> _applyMobileViewport() async {
+  Future<void> _applyMobileLayoutEnhancements() async {
     try {
       await _controller.runJavaScript('''
 (function() {
@@ -246,10 +246,138 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     meta.name = 'viewport';
     document.head.appendChild(meta);
   }
-  meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0';
+  meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover';
+
+  var style = document.getElementById('qtoys-app-mobile-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'qtoys-app-mobile-style';
+    document.head.appendChild(style);
+  }
+  style.textContent = `
+    html { font-size: 18px !important; -webkit-text-size-adjust: 100%; }
+    body, .site, .site-content, .content-area, .entry-content {
+      max-width: 100% !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    body.woocommerce-account .site-content,
+    body.woocommerce-account .woocommerce {
+      padding-left: 12px !important;
+      padding-right: 12px !important;
+    }
+    .woocommerce-MyAccount-navigation,
+    .woocommerce-MyAccount-content {
+      width: 100% !important;
+      max-width: 100% !important;
+      float: none !important;
+    }
+    .woocommerce-MyAccount-navigation {
+      margin-bottom: 1rem !important;
+    }
+    .woocommerce-MyAccount-navigation ul {
+      display: flex !important;
+      flex-wrap: wrap !important;
+      gap: 8px !important;
+      padding: 0 !important;
+    }
+    .woocommerce-MyAccount-navigation li {
+      list-style: none !important;
+      margin: 0 !important;
+    }
+    .woocommerce-MyAccount-navigation li a {
+      display: block !important;
+      font-size: 1rem !important;
+      line-height: 1.35 !important;
+      padding: 10px 14px !important;
+      border-radius: 8px !important;
+      background: #f5f5f5 !important;
+    }
+    .woocommerce-MyAccount-navigation-link.is-active a,
+    .woocommerce-MyAccount-navigation-link--orders.is-active a {
+      font-weight: 700 !important;
+      background: #e8f5e9 !important;
+    }
+    .woocommerce-orders-table,
+    .woocommerce-table--order-details,
+    .shop_table {
+      display: block !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow-x: auto !important;
+      font-size: 1rem !important;
+    }
+    .woocommerce-orders-table thead,
+    .woocommerce-table--order-details thead {
+      display: table-header-group !important;
+    }
+    .woocommerce-orders-table tbody,
+    .woocommerce-table--order-details tbody {
+      display: table-row-group !important;
+    }
+    .woocommerce-orders-table tr,
+    .woocommerce-table--order-details tr {
+      display: table-row !important;
+    }
+    .woocommerce-orders-table th,
+    .woocommerce-orders-table td,
+    .woocommerce-table--order-details th,
+    .woocommerce-table--order-details td {
+      font-size: 0.95rem !important;
+      padding: 10px 8px !important;
+      vertical-align: top !important;
+      word-break: break-word !important;
+    }
+    .woocommerce-MyAccount-content p,
+    .woocommerce-MyAccount-content li,
+    .woocommerce-order-details,
+    .woocommerce-customer-details {
+      font-size: 1rem !important;
+      line-height: 1.5 !important;
+    }
+    .woocommerce-button, .button, a.button {
+      font-size: 1rem !important;
+      padding: 12px 16px !important;
+      min-height: 44px !important;
+    }
+    @media (max-width: 768px) {
+      .woocommerce-orders-table thead { display: none !important; }
+      .woocommerce-orders-table tr {
+        display: block !important;
+        margin-bottom: 12px !important;
+        border: 1px solid #ddd !important;
+        border-radius: 8px !important;
+        padding: 8px !important;
+      }
+      .woocommerce-orders-table td {
+        display: flex !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+        border: none !important;
+      }
+      .woocommerce-orders-table td::before {
+        content: attr(data-title);
+        font-weight: 600 !important;
+        flex: 0 0 40% !important;
+      }
+    }
+  `;
+
   document.documentElement.style.width = '100%';
   document.body.style.width = '100%';
   document.body.style.margin = '0';
+
+  var path = (window.location.pathname || '').toLowerCase();
+  if (path.indexOf('/my-account/orders') >= 0 || path.indexOf('/view-order/') >= 0) {
+    var ordersTab = document.querySelector('.woocommerce-MyAccount-navigation-link--orders');
+    if (ordersTab) {
+      ordersTab.classList.add('is-active');
+      var link = ordersTab.querySelector('a');
+      if (link) link.style.fontWeight = '700';
+    }
+    var content = document.querySelector('.woocommerce-MyAccount-content');
+    if (content) content.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 })();
 ''');
     } catch (_) {}
@@ -577,14 +705,30 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _fallbackToFormLoginOrTarget();
   }
 
+  static bool _isAccountDeepLink(Uri uri) {
+    final p = uri.path.toLowerCase();
+    return p.contains('/my-account/orders') ||
+        p.contains('/my-account/view-order') ||
+        p.contains('/my-account/edit-account') ||
+        p.contains('/my-account/lost-password');
+  }
+
   Future<void> _continueAfterAuthBootstrap(String currentUrl) async {
     if (_addQueue.isNotEmpty) {
       await _startAddToCartQueue();
       return;
     }
     final target = _postBridgeTargetUrl ?? widget.initialUrl;
-    final current = Uri.tryParse(currentUrl);
     final want = Uri.tryParse(target);
+    if (want != null && _isAccountDeepLink(want)) {
+      final current = Uri.tryParse(currentUrl);
+      if (current == null ||
+          _normalizePath(current.path) != _normalizePath(want.path)) {
+        await _controller.loadRequest(want);
+      }
+      return;
+    }
+    final current = Uri.tryParse(currentUrl);
     if (current != null &&
         want != null &&
         current.host == want.host &&

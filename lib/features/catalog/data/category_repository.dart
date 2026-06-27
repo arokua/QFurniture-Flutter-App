@@ -3,21 +3,28 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../../config/store_config.dart';
+import '../../../services/auth_service.dart';
 import '../domain/category.dart';
 
 const _baseUrl = 'https://qtoys.com.au';
 const _categoriesEndpoint = '$_baseUrl/wp-json/wc/store/v1/products/categories';
 
 class CategoryRepository {
+  static final Map<String, int> _slugIdCache = {};
+
+  Set<String> get _allowedRootSlugs => allowedParentSlugsForRole(
+        AuthService.instance.currentSession?.role,
+      );
+
   /// Fetches every category page from the Store API (WC defaults to ~10–100 per page).
   Future<List<Category>> fetchCategories() async {
     try {
       final all = await _fetchAllCategoryPages();
       if (all.isEmpty) return _fallbackCategories();
 
-      final byId = <int, Category>{for (final c in all) c.id: c};
+      final allowedRoots = _allowedRootSlugs;
       final allowedRootIds = all
-          .where((c) => c.parent == 0 && allowedParentSlugs.contains(c.slug))
+          .where((c) => c.parent == 0 && allowedRoots.contains(c.slug))
           .map((c) => c.id)
           .toSet();
 
@@ -26,8 +33,7 @@ class CategoryRepository {
         allowedIds.addAll(_collectDescendantIds(rootId, all));
       }
 
-      final filtered =
-          all.where((c) => allowedIds.contains(c.id)).toList();
+      final filtered = all.where((c) => allowedIds.contains(c.id)).toList();
       return filtered.isEmpty ? _fallbackCategories() : filtered;
     } catch (_) {
       return _fallbackCategories();
@@ -56,8 +62,7 @@ class CategoryRepository {
         list.map((e) => Category.fromJson(e as Map<String, dynamic>)),
       );
 
-      totalPages =
-          int.tryParse(res.headers['x-wp-totalpages'] ?? '') ?? page;
+      totalPages = int.tryParse(res.headers['x-wp-totalpages'] ?? '') ?? page;
       if (list.length < 100) break;
       page++;
     }
@@ -86,15 +91,23 @@ class CategoryRepository {
   /// Returns category tree (roots with children) for display.
   Future<List<Category>> getCategoryTree() async {
     final flat = await fetchCategories();
-    return buildCategoryTree(flat, allowedRootsOnly: true);
+    return buildCategoryTree(
+      flat,
+      allowedRootsOnly: true,
+      allowedRootSlugs: _allowedRootSlugs,
+    );
   }
 
-  /// Resolve a Store API category id by slug (cached in memory for the session).
-  static int? _slugIdCache;
-
   Future<int?> resolveCategoryIdBySlug(String slug) async {
-    if (_slugIdCache != null && slug == kInitialSyncCategorySlug) {
-      return _slugIdCache;
+    final resolved = await resolveCategoryBySlug(slug);
+    return resolved?.id;
+  }
+
+  /// Resolve Store API category id + display name by slug.
+  Future<({int id, String name})?> resolveCategoryBySlug(String slug) async {
+    final cached = _slugIdCache[slug];
+    if (cached != null && cached > 0) {
+      return (id: cached, name: _cachedNameForSlug(slug));
     }
     try {
       final uri = Uri.parse(_categoriesEndpoint).replace(
@@ -108,15 +121,21 @@ class CategoryRepository {
       if (list == null || list.isEmpty) return null;
       final first = list.first;
       if (first is! Map<String, dynamic>) return null;
-      final id = first['id'];
-      final parsed = id is int ? id : int.tryParse('$id');
-      if (parsed != null && parsed > 0 && slug == kInitialSyncCategorySlug) {
-        _slugIdCache = parsed;
-      }
-      return parsed;
+      final cat = Category.fromJson(first);
+      if (cat.id <= 0) return null;
+      _slugIdCache[slug] = cat.id;
+      _slugNameCache[slug] = cat.name;
+      return (id: cat.id, name: cat.name);
     } catch (_) {
       return null;
     }
+  }
+
+  static final Map<String, String> _slugNameCache = {};
+
+  static String _cachedNameForSlug(String slug) {
+    if (slug == kInitialSyncCategorySlug) return "What's New";
+    return _slugNameCache[slug] ?? slug;
   }
 
   List<Category> _fallbackCategories() {

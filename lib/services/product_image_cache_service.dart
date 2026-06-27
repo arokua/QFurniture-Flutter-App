@@ -91,8 +91,9 @@ class ProductImageCacheService extends ChangeNotifier {
     _workerRunning = true;
     try {
       while (_highQueue.isNotEmpty || _lowQueue.isNotEmpty) {
-        final map = _highQueue.isNotEmpty ? _highQueue.removeAt(0) : _lowQueue.removeAt(0);
-        await _cacheProductMap(map);
+        final high = _highQueue.isNotEmpty;
+        final map = high ? _highQueue.removeAt(0) : _lowQueue.removeAt(0);
+        await _cacheProductMap(map, maxImages: high ? kCachedImagesPerProduct : 1);
         await Future<void>.delayed(Duration.zero);
       }
     } finally {
@@ -103,7 +104,10 @@ class ProductImageCacheService extends ChangeNotifier {
     }
   }
 
-  Future<void> _cacheProductMap(Map<String, dynamic> map) async {
+  Future<void> _cacheProductMap(
+    Map<String, dynamic> map, {
+    int maxImages = kCachedImagesPerProduct,
+  }) async {
     final id = map['id'];
     final productId = id is int ? id : int.tryParse('$id');
     if (productId == null || productId <= 0) return;
@@ -125,7 +129,8 @@ class ProductImageCacheService extends ChangeNotifier {
     }
 
     var changed = false;
-    final toCache = urls.take(kCachedImagesPerProduct).toList();
+    final limit = maxImages.clamp(1, kCachedImagesPerProduct);
+    final toCache = urls.take(limit).toList();
     for (var i = 0; i < toCache.length; i++) {
       final url = toCache[i];
       if (!isImageUrl(url)) continue;
