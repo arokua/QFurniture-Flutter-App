@@ -345,11 +345,22 @@ class StoreCartApiService {
     return null;
   }
 
+  /// Append a cache-buster + identity query param so the request bypasses the
+  /// server FastCGI / Cloudflare cache. The /cart endpoint is cached (HIT),
+  /// which otherwise returns a stale empty guest cart regardless of Cart-Token.
+  static Uri bustCache(Uri u) => u.replace(queryParameters: {
+        ...u.queryParameters,
+        '_cb': DateTime.now().microsecondsSinceEpoch.toString(),
+      });
+
   /// Headers for GET requests — no Content-Type (avoids Cerber/WP rejecting GETs with body-type header).
   Map<String, String> get _getHeaders {
     final h = <String, String>{
       'Accept': 'application/json',
       'User-Agent': kAppUserAgent,
+      // Defeat FastCGI/Cloudflare caching of the cart endpoint.
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
     };
     if (_cookie != null && _cookie!.isNotEmpty) h['Cookie'] = _cookie!;
     if (_cartToken != null && _cartToken!.isNotEmpty) h['Cart-Token'] = _cartToken!;
@@ -385,7 +396,7 @@ class StoreCartApiService {
       if (kDebugMode) debugPrint('[StoreCart] priming session via GET /cart ...');
 
       final resCart = await http
-          .get(_cartRoot, headers: _getHeaders)
+          .get(bustCache(_cartRoot), headers: _getHeaders)
           .timeout(const Duration(seconds: 15));
       if (kDebugMode) {
         debugPrint('[StoreCart] prime GET /cart status=${resCart.statusCode} bodyLen=${resCart.body.length}');
@@ -394,7 +405,7 @@ class StoreCartApiService {
 
       if (_storeApiNonce == null || _storeApiNonce!.isEmpty) {
         final resItems = await http
-            .get(_cartItems, headers: _getHeaders)
+            .get(bustCache(_cartItems), headers: _getHeaders)
             .timeout(const Duration(seconds: 15));
         if (kDebugMode) {
           debugPrint('[StoreCart] prime GET /cart/items status=${resItems.statusCode}');
@@ -461,11 +472,12 @@ class StoreCartApiService {
       return (success: false, data: null);
     }
     try {
-      if (kDebugMode) debugPrint('[StoreCart] GET $_cartRoot');
+      final cartUrl = bustCache(_cartRoot);
+      if (kDebugMode) debugPrint('[StoreCart] GET $cartUrl');
       // Use _getHeaders (no Content-Type) — sending Content-Type on a GET
       // was causing Cerber/audit-checkout.php to return 500.
       final res = await http
-          .get(_cartRoot, headers: _getHeaders)
+          .get(cartUrl, headers: _getHeaders)
           .timeout(const Duration(seconds: 15));
       await _absorbResponse(res);
       if (res.statusCode == 500) {
@@ -493,7 +505,7 @@ class StoreCartApiService {
   Future<List<({int id, String key, int quantity})>> getItems() async {
     try {
       final res = await http
-          .get(_cartItems, headers: _getHeaders)
+          .get(bustCache(_cartItems), headers: _getHeaders)
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return [];
       await _absorbResponse(res);

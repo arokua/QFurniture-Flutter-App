@@ -59,12 +59,18 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
     final headers = <String, String>{
       'Accept': 'application/json',
       'User-Agent': kAppUserAgent,
+      // Bypass FastCGI/Cloudflare cache — a cached /cart returns an empty
+      // guest cart regardless of the Cart-Token we send.
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
     };
     if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
     if (cookie.isNotEmpty) headers['Cookie'] = cookie;
     if (cartToken.isNotEmpty) headers['Cart-Token'] = cartToken;
 
-    final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart');
+    final url = StoreCartApiService.bustCache(
+      Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart'),
+    );
     if (kDebugMode) debugPrint('[WooCart] GET $url cartToken=${cartToken.isNotEmpty}');
 
     http.Response res;

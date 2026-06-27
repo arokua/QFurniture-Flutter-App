@@ -957,18 +957,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (product.category.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            decodeHtmlEntities(product.category),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
                         const Spacer(),
                         Align(
                           alignment: Alignment.centerLeft,

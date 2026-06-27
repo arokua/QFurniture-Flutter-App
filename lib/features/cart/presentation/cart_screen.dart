@@ -28,11 +28,15 @@ final rawStoreCartDebugProvider =
   final jwt = AuthService.instance.jwtToken ?? '';
   final cookie = StoreCartApiService.instance.cookie ?? '';
   final cartToken = StoreCartApiService.instance.cartToken ?? '';
-  final url = Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart');
+  final url = StoreCartApiService.bustCache(
+    Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart'),
+  );
 
   final headers = <String, String>{
     'Accept': 'application/json',
     'User-Agent': kAppUserAgent,
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
   };
   if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
   if (cookie.isNotEmpty) headers['Cookie'] = cookie;

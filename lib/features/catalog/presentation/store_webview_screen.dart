@@ -798,9 +798,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       // (wp_woocommerce_session_*) are sent — the app's http.Client can't see these.
       final result = await _controller.runJavaScriptReturningResult('''
 (function() {
-  return fetch('/wp-json/wc/store/v1/cart', {
+  return fetch('/wp-json/wc/store/v1/cart?_cb=' + Date.now(), {
     credentials: 'include',
-    headers: { 'Accept': 'application/json' }
+    cache: 'no-store',
+    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
   }).then(function(r) {
     return r.text();
   }).catch(function(e) { return ''; });
