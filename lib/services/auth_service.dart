@@ -217,7 +217,10 @@ class AuthService extends ChangeNotifier {
           await _fetchWooCustomerByJwt(token, jwtPayload);
       customer ??= await _fetchWooCustomerByEmail(session.email);
       final cid = customer?['id'];
-      final customerId = cid is int ? cid : (cid is num ? cid.toInt() : null);
+      var customerId = cid is int ? cid : (cid is num ? cid.toInt() : null);
+      // WooCommerce customer id equals WP user id for registered users; use JWT
+      // sub when WC lookup fails so order history / MOQ still work.
+      customerId ??= _wpUserIdFromJwtPayload(jwtPayload);
       if (customerId == null) return null;
 
       await _persist(

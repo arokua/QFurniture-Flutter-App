@@ -3,15 +3,17 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:http/http.dart' as http;
 
+import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 
-/// WooCommerce REST API (`/wp-json/wc/v3/...`) using JWT or Basic auth fallback.
+/// WooCommerce REST API (`/wp-json/wc/v3/...`) with Basic-auth + JWT fallbacks.
 class WooCommerceRestApi {
   WooCommerceRestApi._();
   static final WooCommerceRestApi instance = WooCommerceRestApi._();
 
   static String get _v3Base => '$kStoreBaseUrl/wp-json/wc/v3';
+  static String get _qtoysOrders => '$kStoreBaseUrl/wp-json/qtoys/v1/my-orders';
 
   static String? get _basicAuthHeader {
     if (kWooKey.isEmpty || kWooSecret.isEmpty) return null;
@@ -19,12 +21,134 @@ class WooCommerceRestApi {
     return 'Basic $token';
   }
 
-  Map<String, String> _jsonHeaders(String jwt) => {
+  Map<String, String> _jwtHeaders(String jwt) => {
         'Authorization': 'Bearer $jwt',
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
         'User-Agent': kAppUserAgent,
       };
+
+  Map<String, String> _basicHeaders() => {
+        'Authorization': _basicAuthHeader!,
+        'Accept': 'application/json',
+        'User-Agent': kAppUserAgent,
+      };
+
+  Map<String, String> _jsonPostHeaders(String jwt) => {
+        ..._jwtHeaders(jwt),
+        'Content-Type': 'application/json',
+      };
+
+  /// GET with Basic auth first (reliable for wc/v3), then JWT Bearer.
+  Future<http.Response> _getV3(
+    String path, {
+    Map<String, String>? query,
+    required String jwt,
+  }) async {
+    final uri = StoreCartApiService.bustCache(
+      Uri.parse('$_v3Base$path').replace(queryParameters: query),
+    );
+    final getHeaders = {
+      'Accept': 'application/json',
+      'User-Agent': kAppUserAgent,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+    };
+
+    if (_basicAuthHeader != null) {
+      final res = await http
+          .get(uri, headers: {...getHeaders, 'Authorization': _basicAuthHeader!})
+          .timeout(const Duration(seconds: 20));
+      if (kDebugMode) {
+        debugPrint('[WooRest] Basic GET $uri → ${res.statusCode}');
+      }
+      if (res.statusCode == 200) return res;
+    }
+
+    final res = await http
+        .get(uri, headers: {...getHeaders, 'Authorization': 'Bearer $jwt'})
+        .timeout(const Duration(seconds: 20));
+    if (kDebugMode) {
+      debugPrint('[WooRest] JWT GET $uri → ${res.statusCode}');
+      if (res.statusCode != 200) {
+        debugPrint(
+          '[WooRest] body: ${res.body.length > 400 ? res.body.substring(0, 400) : res.body}',
+        );
+      }
+    }
+    return res;
+  }
+
+  /// POST with Basic auth first (order creation needs write permission), then JWT.
+  Future<http.Response> _postV3({
+    required String path,
+    required String jwt,
+    required Map<String, dynamic> body,
+  }) async {
+    final uri = Uri.parse('$_v3Base$path');
+    final encoded = jsonEncode(body);
+
+    if (_basicAuthHeader != null) {
+      final res = await http
+          .post(
+            uri,
+            headers: {..._basicHeaders(), 'Content-Type': 'application/json'},
+            body: encoded,
+          )
+          .timeout(const Duration(seconds: 30));
+      if (kDebugMode) {
+        debugPrint('[WooRest] Basic POST $uri → ${res.statusCode}');
+      }
+      if (res.statusCode == 201 || res.statusCode == 200) return res;
+    }
+
+    final res = await http
+        .post(
+          uri,
+          headers: _jsonPostHeaders(jwt),
+          body: encoded,
+        )
+        .timeout(const Duration(seconds: 30));
+    if (kDebugMode) {
+      debugPrint('[WooRest] JWT POST $uri → ${res.statusCode}');
+      if (res.statusCode != 201 && res.statusCode != 200) {
+        debugPrint(
+          '[WooRest] body: ${res.body.length > 400 ? res.body.substring(0, 400) : res.body}',
+        );
+      }
+    }
+    return res;
+  }
+
+  List<WooOrderSummary> _parseOrderList(dynamic decoded) {
+    if (decoded is! List) return const [];
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map(WooOrderSummary.fromJson)
+        .toList();
+  }
+
+  /// JWT-only custom route (qtoys plugin) — lists orders for the signed-in user.
+  Future<List<WooOrderSummary>> _fetchOrdersQtoysJwt(String jwt) async {
+    final uri = StoreCartApiService.bustCache(Uri.parse(_qtoysOrders));
+    try {
+      final res = await http
+          .get(uri, headers: _jwtHeaders(jwt))
+          .timeout(const Duration(seconds: 20));
+      if (kDebugMode) {
+        debugPrint('[WooRest] GET qtoys/my-orders → ${res.statusCode}');
+      }
+      if (res.statusCode == 404) return const [];
+      if (res.statusCode != 200) return const [];
+      final decoded = jsonDecode(res.body);
+      if (decoded is Map && decoded['orders'] is List) {
+        return _parseOrderList(decoded['orders']);
+      }
+      return _parseOrderList(decoded);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[WooRest] qtoys/my-orders error: $e');
+      return const [];
+    }
+  }
 
   /// Orders placed by this customer (newest first).
   Future<List<WooOrderSummary>> fetchCustomerOrders({
@@ -32,65 +156,35 @@ class WooCommerceRestApi {
     required int customerId,
     int perPage = 25,
   }) async {
-    final uri = Uri.parse('$_v3Base/orders').replace(queryParameters: {
-      'customer': '$customerId',
-      'per_page': '$perPage',
-      'orderby': 'date',
-      'order': 'desc',
-      'status': 'any',
-    });
-    try {
-      final res = await http
-          .get(uri, headers: _jsonHeaders(jwt))
-          .timeout(const Duration(seconds: 20));
-      if (kDebugMode) {
-        debugPrint(
-          '[WooRest] GET orders customer=$customerId → ${res.statusCode}',
-        );
+    // 1) Custom JWT route when deployed on the store.
+    final qtoysOrders = await _fetchOrdersQtoysJwt(jwt);
+    if (qtoysOrders.isNotEmpty) return qtoysOrders;
+
+    // 2) Standard wc/v3 — try the resolved customer id, then without status filter.
+    for (final cid in {customerId}) {
+      final res = await _getV3(
+        '/orders',
+        query: {
+          'customer': '$cid',
+          'per_page': '$perPage',
+          'orderby': 'date',
+          'order': 'desc',
+        },
+        jwt: jwt,
+      );
+      if (res.statusCode == 200) {
+        final orders = _parseOrderList(jsonDecode(res.body));
+        if (orders.isNotEmpty) return orders;
       }
-      if (res.statusCode != 200) {
-        final basic = _basicAuthHeader;
-        if (basic != null) {
-          final fallback = await http
-              .get(
-                uri,
-                headers: {
-                  'Authorization': basic,
-                  'Accept': 'application/json',
-                  'User-Agent': kAppUserAgent,
-                },
-              )
-              .timeout(const Duration(seconds: 20));
-          if (kDebugMode) {
-            debugPrint(
-              '[WooRest] fallback Basic GET orders customer=$customerId → ${fallback.statusCode}',
-            );
-          }
-          if (fallback.statusCode == 200) {
-            final decoded = jsonDecode(fallback.body);
-            if (decoded is List) {
-              return decoded
-                  .map((e) => WooOrderSummary.fromJson(e as Map<String, dynamic>))
-                  .toList();
-            }
-          }
-        }
-        if (kDebugMode) {
-          debugPrint(
-            '[WooRest] orders body: ${res.body.length > 500 ? res.body.substring(0, 500) : res.body}',
-          );
-        }
-        return const [];
-      }
-      final decoded = jsonDecode(res.body);
-      if (decoded is! List) return const [];
-      return decoded
-          .map((e) => WooOrderSummary.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (e, st) {
-      if (kDebugMode) debugPrint('[WooRest] fetchCustomerOrders error: $e\n$st');
-      return const [];
     }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[WooRest] fetchCustomerOrders: no orders for customer=$customerId '
+        '(basicKeys=${_basicAuthHeader != null})',
+      );
+    }
+    return const [];
   }
 
   /// True if the customer has at least one completed order (MOQ “returning” wholesale rule).
@@ -98,41 +192,22 @@ class WooCommerceRestApi {
     required String jwt,
     required int customerId,
   }) async {
-    final uri = Uri.parse('$_v3Base/orders').replace(queryParameters: {
-      'customer': '$customerId',
-      'per_page': '1',
-      'status': 'completed',
-    });
-    try {
-      final res = await http
-          .get(uri, headers: _jsonHeaders(jwt))
-          .timeout(const Duration(seconds: 20));
+    for (final status in ['completed', 'processing', 'on-hold']) {
+      final res = await _getV3(
+        '/orders',
+        query: {
+          'customer': '$customerId',
+          'per_page': '1',
+          'status': status,
+        },
+        jwt: jwt,
+      );
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
-        if (decoded is List) return decoded.isNotEmpty;
+        if (decoded is List && decoded.isNotEmpty) return true;
       }
-      final basic = _basicAuthHeader;
-      if (basic == null) return false;
-      final fallback = await http
-          .get(
-            uri,
-            headers: {
-              'Authorization': basic,
-              'Accept': 'application/json',
-              'User-Agent': kAppUserAgent,
-            },
-          )
-          .timeout(const Duration(seconds: 20));
-      if (fallback.statusCode != 200) return false;
-      final decoded = jsonDecode(fallback.body);
-      if (decoded is! List) return false;
-      return decoded.isNotEmpty;
-    } catch (e, st) {
-      if (kDebugMode) {
-        debugPrint('[WooRest] customerHasCompletedOrder error: $e\n$st');
-      }
-      return false;
     }
+    return false;
   }
 
   /// Single order (includes `line_items`).
@@ -141,47 +216,14 @@ class WooCommerceRestApi {
     required int orderId,
     required int customerId,
   }) async {
-    final uri = Uri.parse('$_v3Base/orders/$orderId');
-    try {
-      final res = await http
-          .get(uri, headers: _jsonHeaders(jwt))
-          .timeout(const Duration(seconds: 20));
-      Map<String, dynamic>? body;
-      if (res.statusCode == 200) {
-        final decoded = jsonDecode(res.body);
-        if (decoded is Map<String, dynamic>) {
-          body = decoded;
-        }
-      } else {
-        final basic = _basicAuthHeader;
-        if (basic != null) {
-          final fallback = await http
-              .get(
-                uri,
-                headers: {
-                  'Authorization': basic,
-                  'Accept': 'application/json',
-                  'User-Agent': kAppUserAgent,
-                },
-              )
-              .timeout(const Duration(seconds: 20));
-          if (fallback.statusCode == 200) {
-            final decoded = jsonDecode(fallback.body);
-            if (decoded is Map<String, dynamic>) {
-              body = decoded;
-            }
-          }
-        }
-      }
-      if (body == null) return null;
-      final o = WooOrderSummary.fromJson(body);
-      final cid = o.customerId;
-      if (cid != null && cid != customerId) return null;
-      return o;
-    } catch (e, st) {
-      if (kDebugMode) debugPrint('[WooRest] fetchOrderById error: $e\n$st');
-      return null;
-    }
+    final res = await _getV3('/orders/$orderId', jwt: jwt);
+    if (res.statusCode != 200) return null;
+    final decoded = jsonDecode(res.body);
+    if (decoded is! Map<String, dynamic>) return null;
+    final o = WooOrderSummary.fromJson(decoded);
+    final cid = o.customerId;
+    if (cid != null && cid != customerId) return null;
+    return o;
   }
 
   /// Creates a pending wholesale order (bank deposit / phone credit card).
@@ -191,12 +233,12 @@ class WooCommerceRestApi {
     required List<({int productId, int quantity})> lineItems,
     required String paymentMethod,
     required String paymentMethodTitle,
+    String? billingEmail,
   }) async {
     if (lineItems.isEmpty) {
       return (order: null, error: 'Cart is empty.');
     }
 
-    final uri = Uri.parse('$_v3Base/orders');
     final payload = <String, dynamic>{
       'customer_id': customerId,
       'payment_method': paymentMethod,
@@ -209,32 +251,18 @@ class WooCommerceRestApi {
                 'quantity': e.quantity,
               })
           .toList(),
+      if (billingEmail != null && billingEmail.isNotEmpty)
+        'billing': {'email': billingEmail},
     };
 
-    Future<http.Response> post(Map<String, String> headers) => http
-        .post(
-          uri,
-          headers: headers,
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 30));
-
     try {
-      var res = await post(_jsonHeaders(jwt));
-      if (res.statusCode != 201 && _basicAuthHeader != null) {
-        res = await post({
-          'Authorization': _basicAuthHeader!,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': kAppUserAgent,
-        });
-      }
+      final res = await _postV3(
+        path: '/orders',
+        jwt: jwt,
+        body: payload,
+      );
 
-      if (kDebugMode) {
-        debugPrint('[WooRest] POST orders → ${res.statusCode}');
-      }
-
-      if (res.statusCode != 201) {
+      if (res.statusCode != 201 && res.statusCode != 200) {
         var msg = 'Order could not be created (${res.statusCode}).';
         try {
           final decoded = jsonDecode(res.body);
@@ -242,6 +270,9 @@ class WooCommerceRestApi {
             msg = decoded['message'].toString();
           }
         } catch (_) {}
+        if (kDebugMode) {
+          debugPrint('[WooRest] createWholesaleOrder failed: $msg');
+        }
         return (order: null, error: msg);
       }
 
@@ -249,7 +280,14 @@ class WooCommerceRestApi {
       if (decoded is! Map<String, dynamic>) {
         return (order: null, error: 'Unexpected response from store.');
       }
-      return (order: WooOrderSummary.fromJson(decoded), error: null);
+      final order = WooOrderSummary.fromJson(decoded);
+      if (kDebugMode) {
+        debugPrint(
+          '[WooRest] order created id=${order.id} number=${order.number} '
+          'customer=${order.customerId}',
+        );
+      }
+      return (order: order, error: null);
     } catch (e, st) {
       if (kDebugMode) debugPrint('[WooRest] createWholesaleOrder error: $e\n$st');
       return (order: null, error: 'Network error creating order.');

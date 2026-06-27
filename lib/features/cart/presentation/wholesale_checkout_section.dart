@@ -10,6 +10,7 @@ import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
+import '../../orders/presentation/order_history_screen.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
 
@@ -75,6 +76,7 @@ class _WholesaleCheckoutSectionState
         lineItems: lines,
         paymentMethod: payment.method,
         paymentMethodTitle: payment.title,
+        billingEmail: session.email,
       );
 
       if (!mounted) return;
@@ -89,6 +91,7 @@ class _WholesaleCheckoutSectionState
       await StoreCartApiService.instance.clearCart();
       ref.read(cartProvider.notifier).clear();
       ref.invalidate(wooCartProvider);
+      ref.invalidate(orderHistoryProvider);
 
       final order = result.order!;
       if (!mounted) return;

@@ -125,6 +125,12 @@ String storeOrderViewUrl(int orderId) =>
 const double kWholesaleMinimumFirstOrderAud = 500.0;
 const double kWholesaleMinimumReturningOrderAud = 350.0;
 
+/// Master toggle for the native wholesale checkout (invoice/bank-deposit flow).
+/// When `true`, wholesale + wholesale_customer roles get the in-app checkout
+/// with REST order creation. When `false`, they fall back to the WebView
+/// checkout like every other role.
+const bool kWholesaleNativeCheckoutEnabled = true;
+
 /// Build URL that adds multiple items to store cart.
 /// Standard WooCommerce only handles one add_to_cart per request; we add first item
 /// and optionally append others as repeated params (store may need plugin for multi).

@@ -18,6 +18,7 @@ import '../../../utils/money_format.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
+import '../../orders/data/wholesale_moq_provider.dart';
 import 'wholesale_checkout_section.dart';
 
 
@@ -110,7 +111,8 @@ class _CartScreenBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isWholesaleCheckout = AuthService.instance.isWholesaleCheckoutRole;
+    final isWholesaleCheckout = kWholesaleNativeCheckoutEnabled &&
+        AuthService.instance.isWholesaleCheckoutRole;
     final isSignedIn = AuthService.instance.isSignedIn;
 
 
@@ -789,13 +791,6 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
     final isWholesaleCheckout = widget.isWholesale;
     final tv = widget.snapshot?.totalsView;
 
-    // API-driven MOQ: we look at the snapshot.errors
-    final moqErrors = widget.snapshot?.errors
-            .where((e) => e.contains('must be at least') || e.toLowerCase().contains('minimum'))
-            .toList() ??
-        [];
-    final moqMet = moqErrors.isEmpty;
-
     double clientTotal = 0;
     if (widget.snapshot != null) {
       for (final l in widget.snapshot!.lines) {
@@ -808,6 +803,26 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
         clientTotal += minor / d;
       }
     }
+
+    // MOQ enforcement (wholesale only): client-side gate using the 500/350
+    // thresholds, since the native checkout bypasses the WooCommerce cart's
+    // server-side minimum validation.
+    final moqGate = isWholesaleCheckout
+        ? ref.watch(wholesaleMoqGateProvider).valueOrNull
+        : null;
+    // While the gate resolves, default to the first-order minimum so the MOQ
+    // can never be bypassed on a slow network.
+    final requiredMoq = isWholesaleCheckout
+        ? (moqGate?.requiredMoq ?? kWholesaleMinimumFirstOrderAud)
+        : 0.0;
+    final moqMet =
+        !isWholesaleCheckout || requiredMoq <= 0 || clientTotal >= requiredMoq;
+    final moqMessage = moqMet
+        ? null
+        : 'Minimum order for wholesale is ${formatStorePrice(requiredMoq)}'
+            "${moqGate?.hasCompletedOrder == true ? '' : ' for your first order'}. "
+            "You're at ${formatStorePrice(clientTotal)} — add "
+            '${formatStorePrice(requiredMoq - clientTotal)} more to proceed.';
 
     final useStoreApi = tv != null;
     final titleLeft = useStoreApi ? 'Total' : 'Subtotal';
@@ -886,8 +901,8 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
               ),
             ],
             
-            // MOQ notice (wholesale only) or API errors
-            if (isWholesaleCheckout && !moqMet) ...[
+            // MOQ notice (wholesale only)
+            if (isWholesaleCheckout && moqMessage != null) ...[
               const SizedBox(height: 12),
               Material(
                 color: theme.colorScheme.errorContainer,
@@ -902,7 +917,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          moqErrors.join('\n'),
+                          moqMessage,
                           style: theme.textTheme.bodySmall?.copyWith(
                             height: 1.35, 
                             color: theme.colorScheme.onErrorContainer,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -20,8 +21,20 @@ final orderHistoryProvider =
   final auth = AuthService.instance;
   final s = auth.currentSession;
   final token = s?.token;
-  final cid = s?.customerId ?? await auth.ensureCustomerIdForCurrentSession();
-  if (token == null || token.isEmpty || cid == null) return const [];
+  if (token == null || token.isEmpty) return const [];
+
+  final cid =
+      s?.customerId ?? await auth.ensureCustomerIdForCurrentSession(force: true);
+  if (cid == null) {
+    throw Exception(
+      'Could not resolve your store customer account. Try signing out and back in.',
+    );
+  }
+
+  if (kDebugMode) {
+    debugPrint('[OrderHistory] fetching orders for customerId=$cid');
+  }
+
   return WooCommerceRestApi.instance.fetchCustomerOrders(
     jwt: token,
     customerId: cid,
