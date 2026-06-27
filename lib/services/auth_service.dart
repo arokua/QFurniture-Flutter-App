@@ -224,7 +224,7 @@ class AuthService extends ChangeNotifier {
       if (customerId == null) return null;
 
       await _persist(
-        email: session.email,
+        email: session?.email ?? 'unknownEmail@email.com',
         name: session.displayName,
         role: session.role,
         token: token,

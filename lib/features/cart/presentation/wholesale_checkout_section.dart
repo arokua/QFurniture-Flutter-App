@@ -76,7 +76,7 @@ class _WholesaleCheckoutSectionState
         lineItems: lines,
         paymentMethod: payment.method,
         paymentMethodTitle: payment.title,
-        billingEmail: session.email,
+        billingEmail: session?.email ?? 'unknownEmail@email.com',
       );
 
       if (!mounted) return;
