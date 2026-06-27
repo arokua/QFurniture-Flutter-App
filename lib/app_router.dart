@@ -102,6 +102,7 @@ final router = GoRouter(
       builder: (ctx, st) {
         final url = st.uri.queryParameters['url'] ?? storeCartUrl;
         final autoLogin = st.uri.queryParameters['autologin'] == '1';
+        final mobileLayout = st.uri.queryParameters['mobile'] == '1';
         final extra = st.extra;
         List<({int productId, int quantity})>? addToCartItems;
         if (extra is List) {
@@ -119,6 +120,7 @@ final router = GoRouter(
           initialUrl: url,
           attemptWebLogin: autoLogin,
           addToCartItems: addToCartItems,
+          useMobileLayout: mobileLayout,
         );
       },
     ),

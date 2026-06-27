@@ -101,9 +101,13 @@ class StoreCartApiService {
   Future<void> setCookieFromResponse(http.Response response) async {
     final setCookie = response.headers['set-cookie'];
     if (setCookie != null && setCookie.isNotEmpty) {
-      _cookie =
+      final incoming =
           setCookie.split(',').map((s) => s.trim().split(';').first).join('; ');
-      await _prefs?.setString('cart_session_cookie', _cookie!);
+      _cookie = _mergeCookiesPreservingSession(
+        existing: _cookie,
+        incoming: incoming,
+      );
+      await _prefs?.setString('cart_session_cookie', _cookie ?? incoming);
     }
   }
 

@@ -5,10 +5,13 @@ import 'package:intl/intl.dart';
 
 import '../../../app_router.dart';
 import '../../../config/store_config.dart';
+import '../../../config/store_cart_api_service.dart';
 import '../../../providers.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/woo_commerce_rest_api.dart';
+import '../../../utils/money_format.dart';
 import '../../cart/data/cart_provider.dart';
+import '../../cart/data/woo_cart_provider.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
 import '../domain/woo_order_summary.dart';
 
@@ -78,7 +81,7 @@ Future<void> reorderFromOrder(
     final avail = p.parsedStockQuantityApprox;
     if (avail != null && requested > avail) {
       shortfalls.add(
-        '${p.name}: only $avail available (invoice had $requested).',
+        '${p.name}: only $avail available (order had $requested).',
       );
       toAdd.add((productId: productId, qty: avail));
     } else {
@@ -132,12 +135,16 @@ Future<void> reorderFromOrder(
   final cart = ref.read(cartProvider.notifier);
   for (final t in toAdd) {
     cart.add(t.productId, quantity: t.qty);
+    await StoreCartApiService.instance.addItem(t.productId, quantity: t.qty);
   }
+  ref.invalidate(wooCartProvider);
 
   if (context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Added ${toAdd.length} product line(s) to cart.'),
+        content: Text(
+          'Added ${toAdd.length} product line(s). Open cart to checkout.',
+        ),
       ),
     );
     context.push(AppRoutes.cart);
@@ -175,7 +182,8 @@ class OrderHistoryScreen extends ConsumerWidget {
               },
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Could not load orders: $e')),
+                error: (e, _) =>
+                    Center(child: Text('Could not load orders: $e')),
                 data: (orders) {
                   if (orders.isEmpty) {
                     return ListView(
@@ -195,36 +203,48 @@ class OrderHistoryScreen extends ConsumerWidget {
                       final dateStr = DateFormat.yMMMd()
                           .add_jm()
                           .format(o.dateCreated.toLocal());
+                      final total = double.tryParse(o.total) ?? 0;
                       return Card(
-                        child: ListTile(
-                          title: Text('Order #${o.number}'),
-                          subtitle: Text('$dateStr · ${o.statusLabel}'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                '${o.currency} ${o.total}',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text('Order #${o.number}'),
+                                subtitle: Text('$dateStr · ${o.statusLabel}'),
+                                trailing: Text(
+                                  formatStorePrice(total),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                onTap: () {
+                                  StoreWebViewScreen.push(
+                                    context,
+                                    storeOrderViewUrl(o.id),
+                                    attemptWebLogin:
+                                        AuthService.instance.currentSession !=
+                                            null,
+                                    useMobileLayout: true,
+                                  );
+                                },
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.add_shopping_cart_outlined),
-                                tooltip: 'Reorder',
-                                onPressed: () =>
-                                    reorderFromOrder(context, ref, o),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  TextButton.icon(
+                                    icon: const Icon(Icons.replay, size: 18),
+                                    label: const Text('Place same order'),
+                                    onPressed: () =>
+                                        reorderFromOrder(context, ref, o),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
-                          onTap: () {
-                            StoreWebViewScreen.push(
-                              context,
-                              storeOrderViewUrl(o.id),
-                              attemptWebLogin:
-                                  AuthService.instance.currentSession != null,
-                            );
-                          },
                         ),
                       );
                     },

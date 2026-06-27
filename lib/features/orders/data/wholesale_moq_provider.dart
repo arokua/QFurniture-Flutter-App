@@ -11,7 +11,10 @@ final wholesaleMoqGateProvider =
   final s = AuthService.instance.currentSession;
   final token = s?.token;
   final role = s?.role.toLowerCase() ?? '';
-  if (role != 'wholesale' || token == null || token.isEmpty) {
+  if (role != 'wholesale' && role != 'wholesale_customer') {
+    return (requiredMoq: 0.0, hasCompletedOrder: false);
+  }
+  if (token == null || token.isEmpty) {
     return (requiredMoq: 0.0, hasCompletedOrder: false);
   }
   final cid = s?.customerId ??

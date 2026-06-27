@@ -23,11 +23,14 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
     required this.initialUrl,
     this.attemptWebLogin = false,
     this.addToCartItems,
+    this.useMobileLayout = false,
   });
 
   final String initialUrl;
   final bool attemptWebLogin;
   final List<({int productId, int quantity})>? addToCartItems;
+  /// Request mobile viewport / user-agent (My account pages).
+  final bool useMobileLayout;
 
   /// Opens the store URL: in-app WebView on mobile/desktop, new tab on web.
   static void push(
@@ -35,6 +38,7 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
     String url, {
     bool attemptWebLogin = false,
     List<({int productId, int quantity})>? addToCartItems,
+    bool useMobileLayout = false,
   }) {
     if (kIsWeb) {
       launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
@@ -44,6 +48,7 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
       Uri(path: '/store', queryParameters: {
         'url': url,
         if (attemptWebLogin) 'autologin': '1',
+        if (useMobileLayout) 'mobile': '1',
       }).toString(),
       extra: addToCartItems
           ?.map((e) => {'productId': e.productId, 'quantity': e.quantity})
@@ -57,6 +62,10 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
 }
 
 class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
+  static const _mobileSafariUserAgent =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
   late final WebViewController _controller;
   final _cookieManager = WebViewCookieManager();
   bool _autoLoginSubmitted = false;
@@ -129,6 +138,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
           onPageStarted: (_) {},
           onPageFinished: (String url) async {
             try {
+              if (widget.useMobileLayout) {
+                await _applyMobileViewport();
+              }
               // If we are mid-add-to-cart sequence, just continue it.
               if (_adding) {
                 if (kDebugMode) {
@@ -216,8 +228,31 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
         ),
       );
 
+    if (widget.useMobileLayout) {
+      _controller.setUserAgent(_mobileSafariUserAgent);
+    }
+
     // Inject session cookie into WebView before loading, then load URL.
     _injectCookiesAndLoad();
+  }
+
+  Future<void> _applyMobileViewport() async {
+    try {
+      await _controller.runJavaScript('''
+(function() {
+  var meta = document.querySelector('meta[name="viewport"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'viewport';
+    document.head.appendChild(meta);
+  }
+  meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0';
+  document.documentElement.style.width = '100%';
+  document.body.style.width = '100%';
+  document.body.style.margin = '0';
+})();
+''');
+    } catch (_) {}
   }
 
   @override

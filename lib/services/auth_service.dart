@@ -98,6 +98,12 @@ class AuthService extends ChangeNotifier {
   /// Identifies if the signed-in user is a wholesale account.
   bool get isWholesaleUser =>
       currentSession?.role.toLowerCase() == 'wholesale';
+
+  /// Wholesale B2B checkout (native invoice flow, not WebView checkout).
+  bool get isWholesaleCheckoutRole {
+    final r = currentSession?.role.toLowerCase() ?? '';
+    return r == 'wholesale' || r == 'wholesale_customer';
+  }
   bool get hasWebLoginCredentials =>
       (_lastAuthEmail != null && _lastAuthEmail!.isNotEmpty) &&
       (_lastAuthPassword != null && _lastAuthPassword!.isNotEmpty);

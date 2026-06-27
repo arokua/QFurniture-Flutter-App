@@ -11,6 +11,7 @@ String _accountRoleLabel(String role) {
     case 'customer':
       return 'CUSTOMER';
     case 'wholesale':
+    case 'wholesale_customer':
       return 'WHOLESALE';
     case 'dropshipping':
       return 'DROPSHIP / RETAIL';
@@ -168,6 +169,7 @@ class MoreScreen extends StatelessWidget {
                 context,
                 url,
                 attemptWebLogin: session != null,
+                useMobileLayout: true,
               );
             },
           ),
@@ -187,11 +189,7 @@ class MoreScreen extends StatelessWidget {
               title: const Text('Order history'),
               subtitle: const Text('View and reorder past invoices'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => StoreWebViewScreen.push(
-                context,
-                '$kStoreBaseUrl/my-account/orders/',
-                attemptWebLogin: true,
-              ),
+              onTap: () => context.push(AppRoutes.orders),
             ),
         ],
       ),

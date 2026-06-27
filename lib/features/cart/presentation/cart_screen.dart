@@ -18,6 +18,7 @@ import '../../../utils/money_format.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
+import 'wholesale_checkout_section.dart';
 
 
 /// DEBUG: raw GET /wp-json/wc/store/v1/cart with all available auth headers.
@@ -105,7 +106,7 @@ class _CartScreenBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isWholesale = AuthService.instance.isWholesaleUser;
+    final isWholesaleCheckout = AuthService.instance.isWholesaleCheckoutRole;
     final isSignedIn = AuthService.instance.isSignedIn;
 
 
@@ -139,15 +140,20 @@ class _CartScreenBody extends ConsumerWidget {
       error: (e, st) => _emptyScaffold(
         context,
         ref,
-        isWholesale: isWholesale,
+        isWholesale: isWholesaleCheckout,
         error: '$e',
       ),
       data: (woo) {
         final snap = woo.snapshot;
         if (snap == null || snap.isEmpty) {
-          return _emptyScaffold(context, ref, isWholesale: isWholesale);
+          return _emptyScaffold(context, ref, isWholesale: isWholesaleCheckout);
         }
-        return _loadedScaffold(context, ref, snap: snap, isWholesale: isWholesale);
+        return _loadedScaffold(
+          context,
+          ref,
+          snap: snap,
+          isWholesale: isWholesaleCheckout,
+        );
       },
     );
   }
@@ -155,7 +161,7 @@ class _CartScreenBody extends ConsumerWidget {
   /// Pull-to-refresh and app-bar refresh: re-sync JWT/cookies then fetch live cart.
   static Future<void> _onRefreshCart(WidgetRef ref) async {
     if (AuthService.instance.isSignedIn) {
-      await refreshCartSession();
+      await rebootstrapCartSession();
       ref.invalidate(wooCartProvider);
       try {
         await ref.read(wooCartProvider.future);
@@ -753,14 +759,14 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
   bool _isSyncing = false;
 
   Future<void> _handleCheckout(BuildContext context) async {
+    if (AuthService.instance.isWholesaleCheckoutRole) return;
+
     setState(() => _isSyncing = true);
     try {
-      final items = widget.isWholesale
-          ? <({int productId, int quantity})>[]
-          : (widget.snapshot?.lines
-                  .map((l) => (productId: l.productId, quantity: l.quantity))
-                  .toList() ??
-              <({int productId, int quantity})>[]);
+      final items = widget.snapshot?.lines
+              .map((l) => (productId: l.productId, quantity: l.quantity))
+              .toList() ??
+          <({int productId, int quantity})>[];
 
       StoreWebViewScreen.push(
         context,
@@ -776,7 +782,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isWholesale = widget.isWholesale;
+    final isWholesaleCheckout = widget.isWholesale;
     final tv = widget.snapshot?.totalsView;
 
     // API-driven MOQ: we look at the snapshot.errors
@@ -822,60 +828,62 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (useStoreApi) ...[
-                  if (tv.formattedSubtotal != null &&
-                      tv.formattedTotal != null &&
-                      tv.formattedSubtotal != tv.formattedTotal)
+            if (!isWholesaleCheckout) ...[
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (useStoreApi) ...[
+                    if (tv!.formattedSubtotal != null &&
+                        tv.formattedTotal != null &&
+                        tv.formattedSubtotal != tv.formattedTotal)
+                      Text(
+                        'Subtotal ${tv.formattedSubtotal}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                        ),
+                      ),
                     Text(
-                      'Subtotal ${tv.formattedSubtotal}',
+                      tv.shippingLine,
                       style: TextStyle(
                         fontSize: 12,
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                       ),
                     ),
+                  ] else
+                    Text(
+                      'Shipping: contact warehouse@qtoys.com.au or view at checkout',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                   Text(
-                    tv.shippingLine,
+                    titleLeft,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    amountRight,
+                    textAlign: TextAlign.right,
                     style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary,
                     ),
                   ),
-                ] else
-                  Text(
-                    'Shipping: contact warehouse@qtoys.com.au or view at checkout',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  titleLeft,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  amountRight,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
             
             // MOQ notice (wholesale only) or API errors
-            if (isWholesale && !moqMet) ...[
+            if (isWholesaleCheckout && !moqMet) ...[
               const SizedBox(height: 12),
               Material(
                 color: theme.colorScheme.errorContainer,
@@ -904,7 +912,7 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
             ],
             const SizedBox(height: 12),
             // Checkout note (store only)
-            if (!isWholesale) ...[
+            if (!isWholesaleCheckout) ...[
               Text(
                 'Checkout happens on the store website. '
                 "If you don't see items, tap Add to cart on the store page first.",
@@ -914,37 +922,29 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
                 ),
               ),
               const SizedBox(height: 12),
-            ],
-            // Checkout button
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: (_isSyncing)
-                    ? null
-                    : (isWholesale && !moqMet)
-                        ? () => context.go(AppRoutes.home)
-                        : () => _handleCheckout(context),
-                icon: _isSyncing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : Icon(
-                        (isWholesale && !moqMet)
-                            ? Icons.storefront_outlined
-                            : Icons.shopping_cart_checkout,
-                      ),
-                label: Text(
-                  _isSyncing
-                      ? 'Syncing cart...'
-                      : (isWholesale && !moqMet)
-                          ? 'Go back to shop'
-                          : 'Checkout on store website',
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isSyncing ? null : () => _handleCheckout(context),
+                  icon: _isSyncing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.shopping_cart_checkout),
+                  label: Text(
+                    _isSyncing ? 'Syncing cart...' : 'Checkout on store website',
+                  ),
                 ),
               ),
-            ),
+            ] else if (widget.snapshot != null) ...[
+              WholesaleCheckoutSection(
+                snapshot: widget.snapshot!,
+                moqMet: moqMet,
+              ),
+            ],
           ],
         ),
       ),

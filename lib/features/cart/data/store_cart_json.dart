@@ -31,6 +31,7 @@ class StoreCartTotalsView {
     required this.totalPriceMinor,
     required this.totalShippingMinor,
     this.totalItemsMinor,
+    this.totalTaxMinor,
     required this.hasCalculatedShipping,
   });
 
@@ -41,6 +42,7 @@ class StoreCartTotalsView {
   final int? totalShippingMinor;
   /// Sum of line items before shipping (WooCommerce `total_items`).
   final int? totalItemsMinor;
+  final int? totalTaxMinor;
   final bool hasCalculatedShipping;
 
   static StoreCartTotalsView? fromCartJson(Map<String, dynamic> json) {
@@ -53,6 +55,7 @@ class StoreCartTotalsView {
     final tp = _parseMinor(totals['total_price']);
     final ts = _parseMinor(totals['total_shipping']);
     final ti = _parseMinor(totals['total_items']);
+    final tt = _parseMinor(totals['total_tax']);
     final hasShip = json['has_calculated_shipping'] == true;
     return StoreCartTotalsView(
       currencyCode: code,
@@ -61,6 +64,7 @@ class StoreCartTotalsView {
       totalPriceMinor: tp,
       totalShippingMinor: ts,
       totalItemsMinor: ti,
+      totalTaxMinor: tt,
       hasCalculatedShipping: hasShip,
     );
   }
