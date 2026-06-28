@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/web_session_cache.dart';
 import '../../cart/data/cart_provider.dart';
 import '../../cart/data/woo_cart_provider.dart';
 /// In-app WebView for the store (qtoys.com.au). Preserves session/cookies
@@ -62,6 +63,9 @@ class StoreWebViewScreen extends ConsumerStatefulWidget {
       _StoreWebViewScreenState();
 }
 
+/// Post-load session check after fast reuse or POST cookie bridge.
+enum _WebAuthPendingCheck { none, fastPathReuse, postBridgeLoad }
+
 class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   static const _mobileSafariUserAgent =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
@@ -87,6 +91,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   final List<Timer> _loginPrefillTimers = [];
   bool _checkoutCompleted = false;
   bool _postCheckoutRedirectStarted = false;
+  _WebAuthPendingCheck _pendingAuthCheck = _WebAuthPendingCheck.none;
+  bool _fullBridgeInFlight = false;
 
   bool get _isCheckoutFlow {
     final u = widget.initialUrl.toLowerCase();
@@ -148,6 +154,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     });
 
     PostCheckoutNavigation.reset();
+    if (widget.attemptWebLogin) {
+      AuthService.instance.warmWebSessionCode().ignore();
+    }
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -231,6 +240,11 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
               if (!widget.attemptWebLogin) return;
 
+              if (_pendingAuthCheck != _WebAuthPendingCheck.none) {
+                await _resolvePendingAuthCheck();
+                return;
+              }
+
               if (_bridgeNavigationPending) {
                 // Code bridge failed if we are still on the REST endpoint.
                 if (_isQtoysBridgeJsonUrl(url)) {
@@ -247,7 +261,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               }
               if (!_autoLoginSubmitted) {
                 if (await _verifyWebViewSession()) {
-                  _autoLoginSubmitted = true;
+                  _markWebSessionEstablished();
                   _cancelLoginPrefillTimers();
                   return;
                 }
@@ -648,20 +662,101 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     return true;
   }
 
-  Future<bool> _loadTargetAfterVerifiedSession() async {
-    final settleMs = defaultTargetPlatform == TargetPlatform.iOS ? 800 : 400;
-    await Future<void>.delayed(Duration(milliseconds: settleMs));
-    if (!await _verifyWebViewSession()) return false;
-    _autoLoginSubmitted = true;
-    if (_addQueue.isNotEmpty) {
-      await _startAddToCartQueue();
-    } else {
-      await _controller.loadRequest(Uri.parse(widget.initialUrl));
+  Future<bool> _waitForWebViewSession({int? maxMs}) async {
+    final cap = maxMs ??
+        (defaultTargetPlatform == TargetPlatform.iOS ? 700 : 450);
+    const step = 100;
+    for (var elapsed = 0; elapsed < cap; elapsed += step) {
+      if (await _verifyWebViewSession()) return true;
+      if (elapsed + step < cap) {
+        await Future<void>.delayed(const Duration(milliseconds: step));
+      }
     }
-    return true;
+    return false;
   }
 
-  /// REST bridge without a one-time `code` — shows JSON / bad HTTP in WebView.
+  Future<void> _resolvePendingAuthCheck() async {
+    final kind = _pendingAuthCheck;
+    _pendingAuthCheck = _WebAuthPendingCheck.none;
+
+    if (await _waitForWebViewSession()) {
+      WebSessionCache.markValid();
+      _authBootstrapDone = true;
+      _autoLoginSubmitted = true;
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] session ok (${kind.name})');
+      }
+      return;
+    }
+
+    if (kind == _WebAuthPendingCheck.fastPathReuse) {
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] cached web session expired — full bridge');
+      }
+      await _runWebSessionBridge();
+      return;
+    }
+
+    if (kDebugMode) {
+      debugPrint('[StoreWebView] POST bridge cookies did not verify — code bridge');
+    }
+    if (await _startCodeNavigationBridge()) return;
+    await _fallbackToFormLoginOrTarget();
+  }
+
+  void _markWebSessionEstablished() {
+    WebSessionCache.markValid();
+    _autoLoginSubmitted = true;
+  }
+
+  Future<void> _establishWebSessionAndLoadTarget() async {
+    await AuthService.instance.ensureValidSession();
+    // Keep Cloudflare clearance cookies — clearing the jar triggers a new
+    // Turnstile challenge on every subsequent WebView open.
+    await _injectStoreCartCookies();
+
+    if (WebSessionCache.isFresh) {
+      if (kDebugMode) {
+        debugPrint('[StoreWebView] fast path — reuse recent WebView session');
+      }
+      _pendingAuthCheck = _WebAuthPendingCheck.fastPathReuse;
+      if (_addQueue.isNotEmpty) {
+        await _startAddToCartQueue();
+      } else {
+        await _controller.loadRequest(Uri.parse(widget.initialUrl));
+      }
+      return;
+    }
+
+    await _runWebSessionBridge();
+  }
+
+  Future<void> _runWebSessionBridge() async {
+    if (_fullBridgeInFlight) return;
+    _fullBridgeInFlight = true;
+    try {
+      // POST bridge: one HTTP round-trip, no REST page in WebView (fastest when it works).
+      final bridged = await StoreCartApiService.instance
+          .establishWebSessionForWebView(_cookieManager);
+      if (bridged) {
+        _authBootstrapDone = true;
+        _pendingAuthCheck = _WebAuthPendingCheck.postBridgeLoad;
+        if (_addQueue.isNotEmpty) {
+          await _startAddToCartQueue();
+        } else {
+          await _controller.loadRequest(Uri.parse(widget.initialUrl));
+        }
+        return;
+      }
+
+      if (await _startCodeNavigationBridge()) return;
+
+      _authBootstrapDone = true;
+      await _fallbackToFormLoginOrTarget();
+    } finally {
+      _fullBridgeInFlight = false;
+    }
+  }
   static bool _isQtoysBridgeJsonUrl(String url) {
     final u = url.toLowerCase();
     if (!u.contains('/wp-json/qtoys/v1/mobile-session')) return false;
@@ -697,24 +792,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     try {
       await _cookieManager.clearCookies();
     } catch (_) {}
+    WebSessionCache.clear();
     await _injectStoreCartCookies();
-  }
-
-  Future<void> _establishWebSessionAndLoadTarget() async {
-    await AuthService.instance.ensureValidSession();
-    // Keep Cloudflare clearance cookies — clearing the jar triggers a new
-    // Turnstile challenge on every subsequent WebView open.
-    await _injectStoreCartCookies();
-
-    if (await _startCodeNavigationBridge()) return;
-
-    final bridged = await StoreCartApiService.instance
-        .establishWebSessionForWebView(_cookieManager);
-    _authBootstrapDone = true;
-    if (bridged && await _loadTargetAfterVerifiedSession()) return;
-
-    // Session bridge failed — storefront login with credential prefill.
-    await _fallbackToFormLoginOrTarget();
   }
 
   Future<void> _injectCookiesAndLoad() async {
@@ -751,23 +830,18 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     _bridgeNavigationPending = false;
     _authBootstrapDone = true;
 
-    // Allow Set-Cookie + redirect to settle (iOS needs longer than 250ms).
-    final settleMs = defaultTargetPlatform == TargetPlatform.iOS ? 800 : 400;
-    await Future<void>.delayed(Duration(milliseconds: settleMs));
-
-    var sessionOk = await _verifyWebViewSession();
+    var sessionOk = await _waitForWebViewSession();
     if (!sessionOk) {
       if (kDebugMode) {
         debugPrint('[StoreWebView] navigation bridge: verifying via POST fetch');
       }
       if (await _tryJwtCookieBridge()) {
-        await Future<void>.delayed(Duration(milliseconds: settleMs));
-        sessionOk = await _verifyWebViewSession();
+        sessionOk = await _waitForWebViewSession(maxMs: 400);
       }
     }
 
     if (sessionOk) {
-      _autoLoginSubmitted = true;
+      _markWebSessionEstablished();
       if (kDebugMode) {
         debugPrint('[StoreWebView] WebView session verified after bridge');
       }
@@ -848,9 +922,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   Future<void> _bootstrapWebSession() async {
     _authBootstrapDone = true;
     final bridged = await _tryJwtCookieBridge();
-    if (bridged && await _verifyWebViewSession()) {
-      _autoLoginSubmitted = true;
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (bridged && await _waitForWebViewSession(maxMs: 400)) {
+      _markWebSessionEstablished();
       await _continueAfterAuthBootstrap('');
       return;
     }

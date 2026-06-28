@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
+import 'web_session_cache.dart';
 import '../utils/user_facing_errors.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,6 +188,8 @@ class AuthService extends ChangeNotifier {
     await _prefs?.setBool(_guestBrowseKey, false);
     _lastAuthEmail = null;
     _lastAuthPassword = null;
+    _clearWebSessionCodeCache();
+    WebSessionCache.clear();
     await _prefs?.remove(_webLoginEmailKey);
     await _prefs?.remove(_webLoginPasswordKey);
     await _prefs?.remove(_refreshTokenKey);
@@ -436,8 +439,37 @@ class AuthService extends ChangeNotifier {
     return id;
   }
 
+  String? _cachedWebSessionCode;
+  DateTime? _cachedWebSessionCodeAt;
+  static const _webSessionCodeTtl = Duration(seconds: 90);
+
+  /// Pre-mint a one-time WebView login code while the user browses (safe to call in background).
+  Future<void> warmWebSessionCode() async {
+    if (!isSignedIn) return;
+    await mintWebSessionCodeWithRetry();
+  }
+
+  void _clearWebSessionCodeCache() {
+    _cachedWebSessionCode = null;
+    _cachedWebSessionCodeAt = null;
+  }
+
+  String? _cachedWebSessionCodeIfFresh() {
+    final code = _cachedWebSessionCode;
+    final at = _cachedWebSessionCodeAt;
+    if (code == null || at == null) return null;
+    if (DateTime.now().difference(at) > _webSessionCodeTtl) {
+      _clearWebSessionCodeCache();
+      return null;
+    }
+    return code;
+  }
+
   /// Mints a short-lived one-time code (retries once after session refresh).
   Future<String?> mintWebSessionCodeWithRetry() async {
+    final cached = _cachedWebSessionCodeIfFresh();
+    if (cached != null && cached.isNotEmpty) return cached;
+
     await ensureValidSession();
     var code = await mintWebSessionCode();
     if (code != null && code.isNotEmpty) return code;
@@ -474,7 +506,12 @@ class AuthService extends ChangeNotifier {
       final decoded = jsonDecode(resp.body);
       if (decoded is! Map<String, dynamic>) return null;
       final code = decoded['code'] as String?;
-      return (code != null && code.isNotEmpty) ? code : null;
+      if (code != null && code.isNotEmpty) {
+        _cachedWebSessionCode = code;
+        _cachedWebSessionCodeAt = DateTime.now();
+        return code;
+      }
+      return null;
     } catch (e) {
       if (kDebugMode) debugPrint('[Auth] mintWebSessionCode error: $e');
       return null;

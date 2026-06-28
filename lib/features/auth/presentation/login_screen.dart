@@ -59,6 +59,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     await StoreCartApiService.instance
         .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+    AuthService.instance.warmWebSessionCode().ignore();
     if (!mounted) return;
 
     await ref.read(cartProvider.notifier).syncLocalCartToStoreAfterLogin();

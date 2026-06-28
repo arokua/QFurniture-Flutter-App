@@ -852,6 +852,7 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
   Future<void> _handleStoreCheckout(BuildContext context) async {
     setState(() => _isSyncing = true);
     try {
+      AuthService.instance.warmWebSessionCode().ignore();
       final items = widget.snapshot.lines
           .map((l) => (productId: l.productId, quantity: l.quantity))
           .toList();
