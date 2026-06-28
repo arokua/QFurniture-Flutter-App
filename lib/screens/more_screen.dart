@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
+import '../config/post_checkout_destination_preference.dart';
 import '../config/store_config.dart';
 import '../features/catalog/presentation/store_webview_screen.dart';
 import '../services/auth_service.dart';
@@ -22,9 +23,57 @@ String _accountRoleLabel(String role) {
   }
 }
 
-/// More tab: links to Cart and account tools.
-class MoreScreen extends StatelessWidget {
+/// Profile tab: cart, account tools, and display preferences.
+class MoreScreen extends StatefulWidget {
   const MoreScreen({super.key});
+
+  @override
+  State<MoreScreen> createState() => _MoreScreenState();
+}
+
+class _MoreScreenState extends State<MoreScreen> {
+  PostCheckoutDestination _postCheckoutDest =
+      PostCheckoutDestinationPreference.current;
+
+  Future<void> _pickPostCheckoutDestination() async {
+    final picked = await showModalBottomSheet<PostCheckoutDestination>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'After checkout',
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                'Where to go when an order is placed (website checkout or wholesale proceed).',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+            ...PostCheckoutDestination.values.map(
+              (d) => RadioListTile<PostCheckoutDestination>(
+                title: Text(PostCheckoutDestinationPreference.label(d)),
+                value: d,
+                groupValue: _postCheckoutDest,
+                onChanged: (v) => Navigator.pop(ctx, v),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await PostCheckoutDestinationPreference.set(picked);
+    setState(() => _postCheckoutDest = picked);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +84,7 @@ class MoreScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('More'),
+        title: const Text('Profile'),
         elevation: 0,
       ),
       body: ListView(
@@ -190,6 +239,14 @@ class MoreScreen extends StatelessWidget {
               subtitle: const Text('View and reorder past invoices'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => context.push(AppRoutes.orders),
+            ),
+          if (session != null)
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('After checkout'),
+              subtitle: Text(PostCheckoutDestinationPreference.label(_postCheckoutDest)),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _pickPostCheckoutDestination,
             ),
         ],
       ),

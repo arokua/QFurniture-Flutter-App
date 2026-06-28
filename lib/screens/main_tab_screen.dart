@@ -23,7 +23,7 @@ class _MainTabScreenState extends ConsumerState<MainTabScreen> {
   static const List<_TabItem> _tabs = [
     _TabItem(label: 'Catalog', icon: Icons.grid_view, route: AppRoutes.home),
     _TabItem(label: 'Categories', icon: Icons.view_week_outlined, route: AppRoutes.homeCategories),
-    _TabItem(label: 'Profile', icon: Icons.more_horiz, route: AppRoutes.homeMore),
+    _TabItem(label: 'Profile', icon: Icons.account_circle_outlined, route: AppRoutes.homeMore),
   ];
 
   @override

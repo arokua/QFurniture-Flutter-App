@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../app_router.dart';
+import '../../../config/post_checkout_destination_preference.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/woo_commerce_rest_api.dart';
@@ -10,9 +9,41 @@ import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
+import '../../../navigation/post_checkout_navigation.dart';
 import '../../orders/presentation/order_history_screen.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
+
+/// Full wholesale checkout in a draggable sheet (keeps cart lines scrollable).
+void showWholesaleCheckoutSheet({
+  required BuildContext context,
+  required StoreCartApiSnapshot snapshot,
+  required bool moqMet,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (ctx) {
+      final bottom = MediaQuery.paddingOf(ctx).bottom;
+      return DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.88,
+        minChildSize: 0.45,
+        maxChildSize: 0.95,
+        builder: (_, scrollController) => SingleChildScrollView(
+          controller: scrollController,
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 16 + bottom),
+          child: WholesaleCheckoutSection(
+            snapshot: snapshot,
+            moqMet: moqMet,
+          ),
+        ),
+      );
+    },
+  );
+}
 
 /// Native wholesale checkout: order summary + payment choice + create order via WC REST.
 class WholesaleCheckoutSection extends ConsumerStatefulWidget {
@@ -109,12 +140,15 @@ class _WholesaleCheckoutSectionState
             TextButton(
               onPressed: () {
                 Navigator.pop(ctx);
-                context.push(AppRoutes.orders);
+                PostCheckoutNavigation.go(PostCheckoutDestination.orderHistory);
               },
               child: const Text('View orders'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () {
+                Navigator.pop(ctx);
+                PostCheckoutNavigation.go();
+              },
               child: const Text('Done'),
             ),
           ],

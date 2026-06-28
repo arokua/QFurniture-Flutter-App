@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'app_router.dart';
+import 'config/post_checkout_destination_preference.dart';
 import 'config/store_cart_api_service.dart';
 import 'features/cart/data/cart_remote_sync_binding.dart';
 import 'services/product_sync_service.dart';
@@ -26,6 +27,7 @@ void main() async {
   await AuthService.instance.init();
 
   await ProductImageCacheService.instance.init();
+  await PostCheckoutDestinationPreference.init();
 
   // Phased sync only makes sense once we have a session (hard lock). The splash
   // screen validates/refreshes the token, then kicks off the catalogue sync.

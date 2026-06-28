@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../navigation/post_checkout_navigation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../../config/store_cart_api_service.dart';
@@ -84,6 +85,19 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   bool _blockingOverlay = true;
   Timer? _overlayFailsafeTimer;
   final List<Timer> _loginPrefillTimers = [];
+  bool _checkoutCompleted = false;
+
+  bool get _isCheckoutFlow {
+    final u = widget.initialUrl.toLowerCase();
+    return u.contains('/checkout');
+  }
+
+  static bool _urlLooksLikeCheckoutComplete(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    return path.contains('order-received') ||
+        path.contains('thank-you') ||
+        path.contains('checkout-complete');
+  }
 
   @override
   void initState() {
@@ -138,6 +152,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
           onPageStarted: (_) {},
           onPageFinished: (String url) async {
             try {
+              if (_isCheckoutFlow && _urlLooksLikeCheckoutComplete(url)) {
+                _checkoutCompleted = true;
+              }
               if (widget.useMobileLayout) {
                 await _applyMobileLayoutEnhancements();
               }
@@ -234,6 +251,16 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
     // Inject session cookie into WebView before loading, then load URL.
     _injectCookiesAndLoad();
+  }
+
+  Future<void> _leaveWebView() async {
+    final completed = _checkoutCompleted;
+    await _syncAfterWebView();
+    if (!mounted) return;
+    context.pop();
+    if (completed) {
+      PostCheckoutNavigation.go();
+    }
   }
 
   Future<void> _applyMobileLayoutEnhancements() async {
@@ -996,8 +1023,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   /// Close handler: pull cart JSON (HttpOnly-safe), cookies, then server refresh.
   Future<void> _handleClose() async {
-    await _syncAfterWebView();
-    if (mounted) context.pop();
+    await _leaveWebView();
   }
 
   @override
@@ -1006,9 +1032,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
-        await _syncAfterWebView();
-        if (!context.mounted) return;
-        context.pop();
+        await _leaveWebView();
       },
       child: Scaffold(
       appBar: AppBar(

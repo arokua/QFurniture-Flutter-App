@@ -305,37 +305,57 @@ class _CartScreenBody extends ConsumerWidget {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () => _onRefreshCart(ref),
-              child: ListView.builder(
+              child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                itemCount: snap.lines.length,
-              itemBuilder: (context, i) {
-                final line = snap.lines[i];
-                return _CartLineCard(
-                  productId: line.productId,
-                  name: line.name,
-                  sku: line.sku ?? skuById[line.productId],
-                  quantity: line.quantity,
-                  unitPriceDisplay: line.formattedUnitPrice,
-                  lineTotalDisplay: line.formattedLineTotal,
-                  imageUrl: line.imageUrl,
-                  onRemove: () async {
-                    ref.read(cartProvider.notifier).remove(line.productId);
-                    await StoreCartApiService.instance.removeItemByProductId(line.productId);
-                    if (context.mounted) ref.invalidate(wooCartProvider);
-                  },
-                  onQtyChanged: (q) async {
-                    if (q <= 0) return;
-                    ref.read(cartProvider.notifier).setQuantity(line.productId, q);
-                    await StoreCartApiService.instance.updateItemByProductId(line.productId, q);
-                    if (context.mounted) ref.invalidate(wooCartProvider);
-                  },
-                );
-              },
-            ),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    sliver: SliverList.builder(
+                      itemCount: snap.lines.length,
+                      itemBuilder: (context, i) {
+                        final line = snap.lines[i];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _CartLineCard(
+                            productId: line.productId,
+                            name: line.name,
+                            sku: line.sku ?? skuById[line.productId],
+                            quantity: line.quantity,
+                            unitPriceDisplay: line.formattedUnitPrice,
+                            lineTotalDisplay: line.formattedLineTotal,
+                            imageUrl: line.imageUrl,
+                            onRemove: () async {
+                              ref.read(cartProvider.notifier).remove(line.productId);
+                              await StoreCartApiService.instance
+                                  .removeItemByProductId(line.productId);
+                              if (context.mounted) {
+                                ref.invalidate(wooCartProvider);
+                              }
+                            },
+                            onQtyChanged: (q) async {
+                              if (q <= 0) return;
+                              ref.read(cartProvider.notifier).setQuantity(line.productId, q);
+                              await StoreCartApiService.instance
+                                  .updateItemByProductId(line.productId, q);
+                              if (context.mounted) {
+                                ref.invalidate(wooCartProvider);
+                              }
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  if (isWholesale)
+                    SliverToBoxAdapter(
+                      child: _WholesaleMoqBanner(snapshot: snap),
+                    ),
+                  const SliverPadding(padding: EdgeInsets.only(bottom: 8)),
+                ],
+              ),
             ),
           ),
-          _CartSummary(snapshot: snap, isWholesale: isWholesale),
+          _CartCheckoutBar(snapshot: snap, isWholesale: isWholesale),
         ],
       ),
     );
@@ -747,33 +767,94 @@ class _QtyButton extends StatelessWidget {
 }
 
 
-class _CartSummary extends ConsumerStatefulWidget {
-  const _CartSummary({
+class _WholesaleMoqBanner extends ConsumerWidget {
+  const _WholesaleMoqBanner({required this.snapshot});
+
+  final StoreCartApiSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final clientTotal = _cartSnapshotTotal(snapshot);
+    final moqGate = ref.watch(wholesaleMoqGateProvider).valueOrNull;
+    final requiredMoq =
+        moqGate?.requiredMoq ?? kWholesaleMinimumFirstOrderAud;
+    final moqMet = requiredMoq <= 0 || clientTotal >= requiredMoq;
+    if (moqMet) return const SizedBox.shrink();
+
+    final message =
+        'Minimum order for wholesale is ${formatStorePrice(requiredMoq)}'
+        "${moqGate?.hasCompletedOrder == true ? '' : ' for your first order'}. "
+        "You're at ${formatStorePrice(clientTotal)} — add "
+        '${formatStorePrice(requiredMoq - clientTotal)} more to proceed.';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Material(
+        color: theme.colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.error_outline,
+                  size: 20, color: theme.colorScheme.onErrorContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    height: 1.35,
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+double _cartSnapshotTotal(StoreCartApiSnapshot snap) {
+  var total = 0.0;
+  for (final l in snap.lines) {
+    final minor = l.lineTotalMinor ??
+        (l.priceMinor != null ? l.priceMinor! * l.quantity : 0);
+    var d = 1.0;
+    for (var i = 0; i < l.minorUnit; i++) {
+      d *= 10;
+    }
+    total += minor / d;
+  }
+  return total;
+}
+
+/// Compact sticky footer — full wholesale checkout opens in a bottom sheet.
+class _CartCheckoutBar extends ConsumerStatefulWidget {
+  const _CartCheckoutBar({
     required this.snapshot,
     required this.isWholesale,
   });
 
-  /// Null for wholesale (local-only). Non-null for store users (from wooCartProvider).
-  final StoreCartApiSnapshot? snapshot;
+  final StoreCartApiSnapshot snapshot;
   final bool isWholesale;
 
   @override
-  ConsumerState<_CartSummary> createState() => _CartSummaryState();
+  ConsumerState<_CartCheckoutBar> createState() => _CartCheckoutBarState();
 }
 
-class _CartSummaryState extends ConsumerState<_CartSummary> {
+class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
   bool _isSyncing = false;
 
-  Future<void> _handleCheckout(BuildContext context) async {
-    if (AuthService.instance.isWholesaleCheckoutRole) return;
-
+  Future<void> _handleStoreCheckout(BuildContext context) async {
     setState(() => _isSyncing = true);
     try {
-      final items = widget.snapshot?.lines
-              .map((l) => (productId: l.productId, quantity: l.quantity))
-              .toList() ??
-          <({int productId, int quantity})>[];
-
+      final items = widget.snapshot.lines
+          .map((l) => (productId: l.productId, quantity: l.quantity))
+          .toList();
       StoreWebViewScreen.push(
         context,
         storeCheckoutUrl,
@@ -785,186 +866,137 @@ class _CartSummaryState extends ConsumerState<_CartSummary> {
     }
   }
 
+  void _openWholesaleSheet(BuildContext context, bool moqMet) {
+    if (!moqMet) return;
+    showWholesaleCheckoutSheet(
+      context: context,
+      snapshot: widget.snapshot,
+      moqMet: moqMet,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tv = widget.snapshot.totalsView;
+    final clientTotal = _cartSnapshotTotal(widget.snapshot);
     final isWholesaleCheckout = widget.isWholesale;
-    final tv = widget.snapshot?.totalsView;
 
-    double clientTotal = 0;
-    if (widget.snapshot != null) {
-      for (final l in widget.snapshot!.lines) {
-        final minor = l.lineTotalMinor ??
-            (l.priceMinor != null ? l.priceMinor! * l.quantity : 0);
-        var d = 1.0;
-        for (var i = 0; i < l.minorUnit; i++) {
-          d *= 10;
-        }
-        clientTotal += minor / d;
-      }
-    }
-
-    // MOQ enforcement (wholesale only): client-side gate using the 500/350
-    // thresholds, since the native checkout bypasses the WooCommerce cart's
-    // server-side minimum validation.
     final moqGate = isWholesaleCheckout
         ? ref.watch(wholesaleMoqGateProvider).valueOrNull
         : null;
-    // While the gate resolves, default to the first-order minimum so the MOQ
-    // can never be bypassed on a slow network.
     final requiredMoq = isWholesaleCheckout
         ? (moqGate?.requiredMoq ?? kWholesaleMinimumFirstOrderAud)
         : 0.0;
     final moqMet =
         !isWholesaleCheckout || requiredMoq <= 0 || clientTotal >= requiredMoq;
-    final moqMessage = moqMet
-        ? null
-        : 'Minimum order for wholesale is ${formatStorePrice(requiredMoq)}'
-            "${moqGate?.hasCompletedOrder == true ? '' : ' for your first order'}. "
-            "You're at ${formatStorePrice(clientTotal)} — add "
-            '${formatStorePrice(requiredMoq - clientTotal)} more to proceed.';
 
-    final useStoreApi = tv != null;
-    final titleLeft = useStoreApi ? 'Total' : 'Subtotal';
-    final amountRight = useStoreApi && tv.formattedTotal != null
-        ? tv.formattedTotal!
-        : formatStorePrice(clientTotal);
+    final amountRight =
+        tv.formattedTotal ?? formatStorePrice(clientTotal);
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            offset: const Offset(0, -4),
-            blurRadius: 10,
-          ),
-        ],
-      ),
+    return Material(
+      elevation: 8,
+      shadowColor: Colors.black26,
       child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (!isWholesaleCheckout) ...[
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (useStoreApi) ...[
-                    if (tv!.formattedSubtotal != null &&
-                        tv.formattedTotal != null &&
-                        tv.formattedSubtotal != tv.formattedTotal)
-                      Text(
-                        'Subtotal ${tv.formattedSubtotal}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                        ),
-                      ),
-                    Text(
-                      tv.shippingLine,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                      ),
-                    ),
-                  ] else
-                    Text(
-                      'Shipping: contact warehouse@qtoys.com.au or view at checkout',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!isWholesaleCheckout) ...[
+                if (tv.formattedSubtotal != null &&
+                    tv.formattedTotal != null &&
+                    tv.formattedSubtotal != tv.formattedTotal)
                   Text(
-                    titleLeft,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    amountRight,
-                    textAlign: TextAlign.right,
+                    'Subtotal ${tv.formattedSubtotal}',
                     style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.primary,
+                      fontSize: 12,
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                     ),
                   ),
-                ],
-              ),
-            ],
-            
-            // MOQ notice (wholesale only)
-            if (isWholesaleCheckout && moqMessage != null) ...[
-              const SizedBox(height: 12),
-              Material(
-                color: theme.colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(10),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.error_outline,
-                          size: 20, color: theme.colorScheme.onErrorContainer),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          moqMessage,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            height: 1.35, 
-                            color: theme.colorScheme.onErrorContainer,
+                Text(
+                  tv.shippingLine,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Total',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
+                        Text(
+                          amountRight,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: isWholesaleCheckout
+                                ? const Color(0xFFC4A035)
+                                : theme.colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (isWholesaleCheckout)
+                    FilledButton(
+                      onPressed:
+                          moqMet ? () => _openWholesaleSheet(context, moqMet) : null,
+                      child: const Text('Payment & proceed'),
+                    )
+                  else
+                    FilledButton.icon(
+                      onPressed:
+                          _isSyncing ? null : () => _handleStoreCheckout(context),
+                      icon: _isSyncing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.shopping_cart_checkout, size: 20),
+                      label: Text(
+                        _isSyncing ? 'Syncing…' : 'Checkout',
                       ),
-                    ],
+                    ),
+                ],
+              ),
+              if (isWholesaleCheckout) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Tap Payment & proceed for bank details, shipping note, and order submission.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                    height: 1.3,
                   ),
                 ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            // Checkout note (store only)
-            if (!isWholesaleCheckout) ...[
-              Text(
-                'Checkout happens on the store website. '
-                "If you don't see items, tap Add to cart on the store page first.",
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _isSyncing ? null : () => _handleCheckout(context),
-                  icon: _isSyncing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.shopping_cart_checkout),
-                  label: Text(
-                    _isSyncing ? 'Syncing cart...' : 'Checkout on store website',
+              ] else ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Checkout opens on the store website.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                   ),
                 ),
-              ),
-            ] else if (widget.snapshot != null) ...[
-              WholesaleCheckoutSection(
-                snapshot: widget.snapshot!,
-                moqMet: moqMet,
-              ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
