@@ -161,41 +161,132 @@ class WooCommerceRestApi {
     }
   }
 
+  List<WooOrderSummary> _sortOrdersNewestFirst(List<WooOrderSummary> orders) {
+    final copy = List<WooOrderSummary>.from(orders);
+    copy.sort((a, b) => b.dateCreated.compareTo(a.dateCreated));
+    return copy;
+  }
+
+  void _mergeOrders(
+    List<WooOrderSummary> into,
+    Set<int> seen,
+    List<WooOrderSummary> from,
+  ) {
+    for (final o in from) {
+      if (o.id <= 0 || seen.contains(o.id)) continue;
+      seen.add(o.id);
+      into.add(o);
+    }
+  }
+
+  Future<int?> _lookupCustomerIdByEmail(String email, {required String jwt}) async {
+    final res = await _getV3(
+      '/customers',
+      query: {'email': email, 'role': 'all'},
+      jwt: jwt,
+    );
+    if (res.statusCode != 200) return null;
+    final body = jsonDecode(res.body);
+    if (body is List && body.isNotEmpty) {
+      final id = (body.first as Map<String, dynamic>)['id'];
+      return id is int ? id : int.tryParse('$id');
+    }
+    if (body is Map<String, dynamic> && body['id'] != null) {
+      final id = body['id'];
+      return id is int ? id : int.tryParse('$id');
+    }
+    return null;
+  }
+
+  /// Orders for the signed-in user — merges qtoys JWT route + wc/v3 lookups.
+  Future<List<WooOrderSummary>> fetchOrdersForUser({
+    required String jwt,
+    int? customerId,
+    int? wpUserId,
+    String? customerEmail,
+    int perPage = 25,
+  }) async {
+    final seen = <int>{};
+    final merged = <WooOrderSummary>[];
+
+    final qtoys = await fetchOrdersViaQtoysJwt(jwt);
+    _mergeOrders(merged, seen, qtoys.orders);
+    if (kDebugMode) {
+      debugPrint(
+        '[WooRest] fetchOrdersForUser qtoys reached=${qtoys.reached} '
+        'count=${qtoys.orders.length}',
+      );
+    }
+
+    final queryBase = {
+      'per_page': '$perPage',
+      'orderby': 'date',
+      'order': 'desc',
+      'status': 'any',
+    };
+
+    final customerIds = <int>{};
+    if (customerId != null && customerId > 0) customerIds.add(customerId);
+    if (wpUserId != null && wpUserId > 0) customerIds.add(wpUserId);
+
+    final email = customerEmail?.trim();
+    if (email != null && email.contains('@')) {
+      final fromEmail = await _lookupCustomerIdByEmail(email, jwt: jwt);
+      if (fromEmail != null && fromEmail > 0) customerIds.add(fromEmail);
+    }
+
+    for (final cid in customerIds) {
+      final res = await _getV3(
+        '/orders',
+        query: {...queryBase, 'customer': '$cid'},
+        jwt: jwt,
+      );
+      if (res.statusCode == 200) {
+        _mergeOrders(merged, seen, _parseOrderList(jsonDecode(res.body)));
+        if (kDebugMode) {
+          debugPrint('[WooRest] wc/v3 customer=$cid → ${merged.length} total');
+        }
+      }
+    }
+
+    if (merged.isEmpty && email != null && email.contains('@')) {
+      final res = await _getV3(
+        '/orders',
+        query: {...queryBase, 'search': email},
+        jwt: jwt,
+      );
+      if (res.statusCode == 200) {
+        _mergeOrders(merged, seen, _parseOrderList(jsonDecode(res.body)));
+        if (kDebugMode) {
+          debugPrint('[WooRest] wc/v3 search email → ${merged.length} total');
+        }
+      }
+    }
+
+    if (merged.isEmpty && kDebugMode) {
+      debugPrint(
+        '[WooRest] fetchOrdersForUser: empty — customerIds=$customerIds '
+        'email=$email basicKeys=${_basicAuthHeader != null}',
+      );
+    }
+
+    return _sortOrdersNewestFirst(merged);
+  }
+
   /// Orders placed by this customer (newest first).
   Future<List<WooOrderSummary>> fetchCustomerOrders({
     required String jwt,
     int? customerId,
+    String? customerEmail,
     int perPage = 25,
+    bool skipQtoys = false,
   }) async {
-    // 1) Custom JWT route when deployed on the store (no customer id required).
-    final qtoys = await fetchOrdersViaQtoysJwt(jwt);
-    if (qtoys.reached) return qtoys.orders;
-
-    if (customerId == null) return const [];
-
-    // 2) Standard wc/v3 — try the resolved customer id.
-    final res = await _getV3(
-      '/orders',
-      query: {
-        'customer': '$customerId',
-        'per_page': '$perPage',
-        'orderby': 'date',
-        'order': 'desc',
-      },
+    return fetchOrdersForUser(
       jwt: jwt,
+      customerId: customerId,
+      customerEmail: customerEmail,
+      perPage: perPage,
     );
-    if (res.statusCode == 200) {
-      final orders = _parseOrderList(jsonDecode(res.body));
-      if (orders.isNotEmpty) return orders;
-    }
-
-    if (kDebugMode) {
-      debugPrint(
-        '[WooRest] fetchCustomerOrders: no orders for customer=$customerId '
-        '(basicKeys=${_basicAuthHeader != null})',
-      );
-    }
-    return const [];
   }
 
   /// True if the customer has at least one completed order (MOQ “returning” wholesale rule).

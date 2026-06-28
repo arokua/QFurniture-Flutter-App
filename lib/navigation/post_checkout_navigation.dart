@@ -10,15 +10,24 @@ import '../services/auth_service.dart';
 class PostCheckoutNavigation {
   PostCheckoutNavigation._();
 
+  static bool _handled = false;
+
+  /// Reset between checkout attempts (e.g. new WebView session).
+  static void reset() => _handled = false;
+
   static void go([PostCheckoutDestination? destination]) {
+    if (_handled) return;
+    _handled = true;
+
     final dest = destination ?? PostCheckoutDestinationPreference.current;
     switch (dest) {
       case PostCheckoutDestination.catalog:
         router.go(AppRoutes.home);
       case PostCheckoutDestination.orderHistory:
-        router.push(AppRoutes.orders);
+        router.go(AppRoutes.orders);
       case PostCheckoutDestination.myAccountDashboard:
-        _openStoreWebView(storeMyAccountUrl);
+        router.go(AppRoutes.home);
+        Future.microtask(() => _openStoreWebView(storeMyAccountUrl));
     }
   }
 

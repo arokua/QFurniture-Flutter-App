@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../config/post_checkout_destination_preference.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/woo_commerce_rest_api.dart';
@@ -98,6 +97,7 @@ class _WholesaleCheckoutSectionState
     }
 
     setState(() => _submitting = true);
+    PostCheckoutNavigation.reset();
     try {
       final payment = _payment == WholesalePaymentMethod.bankDeposit
           ? (method: 'bacs', title: 'Bank Deposit')
@@ -128,32 +128,18 @@ class _WholesaleCheckoutSectionState
 
       final order = result.order!;
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Order placed'),
-          content: Text(
-            'Order #${order.number} has been submitted.\n\n'
-            '${_payment == WholesalePaymentMethod.bankDeposit ? 'Please transfer payment using the bank details below.' : 'Our team will contact you regarding payment.'}',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                PostCheckoutNavigation.go(PostCheckoutDestination.orderHistory);
-              },
-              child: const Text('View orders'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                PostCheckoutNavigation.go();
-              },
-              child: const Text('Done'),
-            ),
-          ],
+
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.of(context).pop(); // close wholesale checkout sheet
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Order #${order.number} has been submitted.'),
+          duration: const Duration(seconds: 4),
         ),
       );
+
+      PostCheckoutNavigation.go();
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

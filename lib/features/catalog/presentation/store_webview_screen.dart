@@ -86,6 +86,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   Timer? _overlayFailsafeTimer;
   final List<Timer> _loginPrefillTimers = [];
   bool _checkoutCompleted = false;
+  bool _postCheckoutRedirectStarted = false;
 
   bool get _isCheckoutFlow {
     final u = widget.initialUrl.toLowerCase();
@@ -93,10 +94,39 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   }
 
   static bool _urlLooksLikeCheckoutComplete(String url) {
-    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
-    return path.contains('order-received') ||
-        path.contains('thank-you') ||
-        path.contains('checkout-complete');
+    final uri = Uri.tryParse(url);
+    final path = uri?.path.toLowerCase() ?? '';
+    final full = url.toLowerCase();
+    if (path.contains('order-received')) return true;
+    if (path.contains('thank-you') || path.contains('checkout-complete')) {
+      return true;
+    }
+    if (full.contains('order-received') || full.contains('key=wc_order')) {
+      return true;
+    }
+    return RegExp(r'/checkout/order-received/\d+').hasMatch(path);
+  }
+
+  Future<void> _redirectAfterCheckoutIfNeeded(String url) async {
+    if (!_isCheckoutFlow || _postCheckoutRedirectStarted) return;
+    if (!_urlLooksLikeCheckoutComplete(url)) return;
+
+    _postCheckoutRedirectStarted = true;
+    _checkoutCompleted = true;
+
+    if (kDebugMode) {
+      debugPrint('[StoreWebView] checkout complete — redirecting ($url)');
+    }
+
+    // Brief pause so the thank-you page can finish rendering.
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
+
+    await _syncAfterWebView();
+    if (!mounted) return;
+
+    context.pop();
+    PostCheckoutNavigation.go();
   }
 
   @override
@@ -117,6 +147,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       setState(() => _blockingOverlay = false);
     });
 
+    PostCheckoutNavigation.reset();
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
@@ -136,15 +168,14 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               _redirectToStorefrontLogin();
               return NavigationDecision.prevent;
             }
-            // Never leave the user on a REST JSON error page.
-            if (u.contains('/wp-json/qtoys/v1/mobile-session') &&
-                !u.contains('code=')) {
+            // Never leave the user on a REST JSON error page (token GET bridge, etc.).
+            if (_isQtoysBridgeJsonUrl(u)) {
               if (kDebugMode) {
                 debugPrint(
-                  '[StoreWebView] blocked token/JSON bridge URL — retrying safe bridge',
+                  '[StoreWebView] blocked REST bridge URL — using storefront login',
                 );
               }
-              _retrySafeWebSessionBridge();
+              _abortBridgeAndUseLoginForm();
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
@@ -154,6 +185,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
             try {
               if (_isCheckoutFlow && _urlLooksLikeCheckoutComplete(url)) {
                 _checkoutCompleted = true;
+                await _redirectAfterCheckoutIfNeeded(url);
+                if (_postCheckoutRedirectStarted) return;
               }
               if (widget.useMobileLayout) {
                 await _applyMobileLayoutEnhancements();
@@ -199,14 +232,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               if (!widget.attemptWebLogin) return;
 
               if (_bridgeNavigationPending) {
-                // If the GET bridge fails it stays on /mobile-session (JSON error).
-                // Do not return early — that left users stuck on the REST "backend" page.
-                if (url.contains('mobile-session')) {
-                  await Future<void>.delayed(const Duration(milliseconds: 400));
-                  final liveUrl = await _controller.currentUrl() ?? url;
-                  await _completeNavigationBridge(
-                    liveUrl.contains('mobile-session') ? url : liveUrl,
-                  );
+                // Code bridge failed if we are still on the REST endpoint.
+                if (_isQtoysBridgeJsonUrl(url)) {
+                  await _abortBridgeAndUseLoginForm();
                 } else {
                   await _completeNavigationBridge(url);
                 }
@@ -239,8 +267,14 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               if (mounted) _maybeDismissBlockingOverlay(url);
             }
           },
-          onWebResourceError: (e) {
+          onWebResourceError: (e) async {
             debugPrint('StoreWebView error: ${e.description}');
+            final failedUrl = e.url?.toLowerCase() ?? '';
+            if (widget.attemptWebLogin &&
+                _isQtoysBridgeJsonUrl(failedUrl) &&
+                mounted) {
+              await _abortBridgeAndUseLoginForm();
+            }
           },
         ),
       );
@@ -255,11 +289,16 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
   Future<void> _leaveWebView() async {
     final completed = _checkoutCompleted;
-    await _syncAfterWebView();
+    final alreadyRedirected = _postCheckoutRedirectStarted;
+    if (!alreadyRedirected) {
+      await _syncAfterWebView();
+    }
     if (!mounted) return;
-    context.pop();
-    if (completed) {
-      PostCheckoutNavigation.go();
+    if (!alreadyRedirected) {
+      context.pop();
+      if (completed) {
+        PostCheckoutNavigation.go();
+      }
     }
   }
 
@@ -609,12 +648,32 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     return true;
   }
 
-  Future<void> _retrySafeWebSessionBridge() async {
+  Future<bool> _loadTargetAfterVerifiedSession() async {
+    final settleMs = defaultTargetPlatform == TargetPlatform.iOS ? 800 : 400;
+    await Future<void>.delayed(Duration(milliseconds: settleMs));
+    if (!await _verifyWebViewSession()) return false;
+    _autoLoginSubmitted = true;
+    if (_addQueue.isNotEmpty) {
+      await _startAddToCartQueue();
+    } else {
+      await _controller.loadRequest(Uri.parse(widget.initialUrl));
+    }
+    return true;
+  }
+
+  /// REST bridge without a one-time `code` — shows JSON / bad HTTP in WebView.
+  static bool _isQtoysBridgeJsonUrl(String url) {
+    final u = url.toLowerCase();
+    if (!u.contains('/wp-json/qtoys/v1/mobile-session')) return false;
+    return !u.contains('code=');
+  }
+
+  /// Do not navigate the WebView to JWT/token bridge URLs — use POST bridge or login form.
+  Future<void> _abortBridgeAndUseLoginForm() async {
     if (!mounted || !widget.attemptWebLogin) return;
     _bridgeNavigationPending = false;
-    _authBootstrapDone = false;
-    _autoLoginSubmitted = false;
-    await _establishWebSessionAndLoadTarget();
+    _authBootstrapDone = true;
+    await _fallbackToFormLoginOrTarget();
   }
 
   Future<void> _redirectToStorefrontLogin() async {
@@ -652,14 +711,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     final bridged = await StoreCartApiService.instance
         .establishWebSessionForWebView(_cookieManager);
     _authBootstrapDone = true;
-    if (bridged) {
-      if (_addQueue.isNotEmpty) {
-        await _startAddToCartQueue();
-      } else {
-        await _controller.loadRequest(Uri.parse(widget.initialUrl));
-      }
-      return;
-    }
+    if (bridged && await _loadTargetAfterVerifiedSession()) return;
 
     // Session bridge failed — storefront login with credential prefill.
     await _fallbackToFormLoginOrTarget();
@@ -879,12 +931,17 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     final js = '''
 (function() {
   var f = document.querySelector('form.woocommerce-form-login');
+  if (!f) f = document.querySelector('form.login');
   if (!f) return 'no-login-form';
-  var u = f.querySelector('input[name="username"]') || document.querySelector('#username');
-  var p = f.querySelector('input[name="password"]') || document.querySelector('#password');
+  var u = f.querySelector('input[name="username"]') || f.querySelector('input[name="log"]') || document.querySelector('#username');
+  var p = f.querySelector('input[name="password"]') || f.querySelector('input[name="pwd"]') || document.querySelector('#password');
   if (!u || !p) return 'no-login-form';
   u.value = '${_escapeJs(email)}';
   p.value = '${_escapeJs(password)}';
+  try { u.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+  try { p.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+  var btn = f.querySelector('button[type="submit"], input[type="submit"], button[name="login"]');
+  if (btn) { btn.click(); return 'clicked'; }
   f.submit();
   return 'submitted';
 })();
@@ -895,7 +952,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
         text = text.substring(1, text.length - 1);
       }
-      if (text != 'submitted') return;
+      if (text != 'submitted' && text != 'clicked') return;
       _autoLoginSubmitted = true;
     } catch (e) {
       debugPrint('WebView WooCommerce auto-login error: $e');

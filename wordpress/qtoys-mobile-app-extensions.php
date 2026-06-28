@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Qtoys Mobile App Extensions
  * Description: JWT-authenticated my-orders endpoint for the Qtoys partner app.
- * Version: 1.0.1
+ * Version: 1.0.3
  * Author: Qtoys
  *
  * Deploy alongside qtoys-mobile-session (v1.2+). Provides:
@@ -81,13 +81,52 @@ function qtoys_rest_my_orders(WP_REST_Request $request) {
 
     $per_page = min(50, max(1, (int) $request->get_param('per_page') ?: 25));
 
-    $orders = wc_get_orders([
-        'customer_id' => $user_id,
-        'limit'       => $per_page,
-        'orderby'     => 'date',
-        'order'       => 'DESC',
-        'return'      => 'objects',
-    ]);
+    $order_args = [
+        'limit'   => $per_page,
+        'orderby' => 'date',
+        'order'   => 'DESC',
+        'return'  => 'objects',
+        'status'  => 'any',
+    ];
+
+    $orders_by_id = wc_get_orders(array_merge($order_args, ['customer_id' => $user_id]));
+
+    $user = get_userdata($user_id);
+    $emails = [];
+    if ($user && is_email($user->user_email)) {
+        $emails[] = strtolower($user->user_email);
+    }
+    if (function_exists('wc_get_customer')) {
+        $wc_customer = wc_get_customer($user_id);
+        if ($wc_customer) {
+            $billing = $wc_customer->get_billing_email();
+            if (is_email($billing)) {
+                $emails[] = strtolower($billing);
+            }
+        }
+    }
+    $emails = array_values(array_unique(array_filter($emails)));
+
+    $orders = $orders_by_id;
+    foreach ($emails as $email) {
+        $by_email = wc_get_orders(array_merge($order_args, ['billing_email' => $email]));
+        if (!empty($by_email)) {
+            $orders = array_merge($orders, $by_email);
+        }
+    }
+
+    // De-duplicate (customer_id + billing_email queries may overlap).
+    $unique = [];
+    foreach ($orders as $order) {
+        if ($order instanceof WC_Order) {
+            $unique[$order->get_id()] = $order;
+        }
+    }
+    $orders = array_values($unique);
+    usort($orders, function ($a, $b) {
+        return $b->get_date_created()->getTimestamp() - $a->get_date_created()->getTimestamp();
+    });
+    $orders = array_slice($orders, 0, $per_page);
 
     $out = [];
     foreach ($orders as $order) {

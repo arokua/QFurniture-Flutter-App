@@ -202,6 +202,13 @@ class AuthService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// WordPress user id embedded in the current JWT (when present).
+  int? get wpUserIdFromCurrentToken {
+    final token = jwtToken?.trim();
+    if (token == null || token.isEmpty) return null;
+    return _wpUserIdFromJwtPayload(_decodeJwtPayload(token));
+  }
+
   /// Best email for billing and WC lookups (username logins may store a handle, not @).
   Future<String> resolvedAccountEmail() async {
     final session = currentSession;

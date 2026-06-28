@@ -29,38 +29,42 @@ class OrderHistoryLoadResult {
 final orderHistoryProvider =
     FutureProvider.autoDispose<OrderHistoryLoadResult>((ref) async {
   final auth = AuthService.instance;
+  await auth.ensureValidSession();
   final s = auth.currentSession;
   final token = s?.token;
   if (token == null || token.isEmpty) {
     return const OrderHistoryLoadResult(orders: []);
   }
 
-  final qtoys = await WooCommerceRestApi.instance.fetchOrdersViaQtoysJwt(token);
-  if (qtoys.reached) {
-    if (kDebugMode) {
-      debugPrint('[OrderHistory] qtoys/my-orders → ${qtoys.orders.length} orders');
-    }
-    return OrderHistoryLoadResult(orders: qtoys.orders);
-  }
-
   final cid =
       s?.customerId ?? await auth.ensureCustomerIdForCurrentSession(force: true);
-  if (cid == null) {
+  final email = await auth.resolvedAccountEmail();
+  final wpUserId = auth.wpUserIdFromCurrentToken;
+
+  if (kDebugMode) {
+    debugPrint(
+      '[OrderHistory] fetch customerId=$cid wpUserId=$wpUserId email=$email',
+    );
+  }
+
+  final orders = await WooCommerceRestApi.instance.fetchOrdersForUser(
+    jwt: token,
+    customerId: cid,
+    wpUserId: wpUserId,
+    customerEmail: email,
+  );
+  if (orders.isNotEmpty) {
+    return OrderHistoryLoadResult(orders: orders);
+  }
+
+  if (cid == null && wpUserId == null) {
     if (kDebugMode) {
       debugPrint('[OrderHistory] customer id unresolved — WebView fallback');
     }
     return const OrderHistoryLoadResult(orders: [], webViewFallback: true);
   }
 
-  if (kDebugMode) {
-    debugPrint('[OrderHistory] fetching wc/v3 orders for customerId=$cid');
-  }
-
-  final orders = await WooCommerceRestApi.instance.fetchCustomerOrders(
-    jwt: token,
-    customerId: cid,
-  );
-  return OrderHistoryLoadResult(orders: orders);
+  return const OrderHistoryLoadResult(orders: []);
 });
 
 Future<void> reorderFromOrder(
@@ -261,6 +265,15 @@ class OrderHistoryScreen extends ConsumerWidget {
                       children: [
                         const SizedBox(height: 80),
                         const Center(child: Text('No orders found yet.')),
+                        const SizedBox(height: 8),
+                        Center(
+                          child: Text(
+                            'Trashed orders are not shown here. '
+                            'Pull down to refresh after placing a new order.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         Center(
                           child: OutlinedButton.icon(
