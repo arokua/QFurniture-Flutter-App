@@ -70,6 +70,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Re-prime Woo cart session cookies after token refresh on cold start.
     await StoreCartApiService.instance
         .bootstrapSessionFromJwt(auth.jwtToken);
+    auth.warmWebSessionCode().ignore();
 
     if (!mounted) return;
     context.go(AppRoutes.home);
@@ -81,7 +82,8 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
-  static const _brandGreen = Color(0xFF8BC34A);
+  static const _brandGreen = Color(0xFF8BC34A); // logo + spinner only
+  static const _splashBackground = Color(0xFFFDF8F0);
 
   @override
   Widget build(BuildContext context) {
@@ -90,11 +92,11 @@ class _SplashScreenState extends State<SplashScreen>
       builder: (context, _) {
         final sync = ProductSyncService.instance;
         return Scaffold(
-      backgroundColor: _brandGreen,
+      backgroundColor: _splashBackground,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        color: _brandGreen,
+        color: _splashBackground,
         child: Center(
           child: FadeTransition(
             opacity: _fade,
@@ -119,7 +121,7 @@ class _SplashScreenState extends State<SplashScreen>
                     height: 28,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
-                      color: Colors.white,
+                      color: _brandGreen,
                     ),
                   ),
                   if (sync.statusMessage != null) ...[
@@ -130,7 +132,7 @@ class _SplashScreenState extends State<SplashScreen>
                         sync.statusMessage!,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.92),
+                          color: Colors.black.withValues(alpha: 0.55),
                           fontSize: 13,
                         ),
                       ),
@@ -152,10 +154,10 @@ class _SplashScreenState extends State<SplashScreen>
       width: 180,
       height: 180,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
+        color: _brandGreen.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(24),
       ),
-      child: const Icon(Icons.chair_alt, size: 90, color: Colors.white),
+      child: const Icon(Icons.chair_alt, size: 90, color: _brandGreen),
     );
   }
 }

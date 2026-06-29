@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/web_auth_cookie_store.dart';
 import '../../../services/web_session_cache.dart';
 import '../../cart/data/cart_provider.dart';
 import '../../cart/data/woo_cart_provider.dart';
@@ -261,7 +262,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
               }
               if (!_autoLoginSubmitted) {
                 if (await _verifyWebViewSession()) {
-                  _markWebSessionEstablished();
+                  await _markWebSessionEstablished();
                   _cancelLoginPrefillTimers();
                   return;
                 }
@@ -306,6 +307,10 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     final alreadyRedirected = _postCheckoutRedirectStarted;
     if (!alreadyRedirected) {
       await _syncAfterWebView();
+      if (widget.attemptWebLogin &&
+          (_autoLoginSubmitted || WebSessionCache.isFresh)) {
+        await StoreCartApiService.instance.persistWebAuthCookiesFromBridge();
+      }
     }
     if (!mounted) return;
     if (!alreadyRedirected) {
@@ -601,11 +606,15 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   /// Inject the StoreCartApiService session cookie into the WebView so the
   /// WooCommerce cart is shared between mobile and browser contexts.
   Future<void> _injectStoreCartCookies() async {
+    await WebAuthCookieStore.injectInto(_cookieManager);
+
     final rawCookie = StoreCartApiService.instance.cookie;
     final cartToken = StoreCartApiService.instance.cartToken;
     if (kDebugMode) {
       debugPrint(
-        '[StoreWebView] injectStoreCartCookies rawCookiePresent=${rawCookie != null && rawCookie.isNotEmpty} cartTokenPresent=${cartToken != null && cartToken.isNotEmpty}',
+        '[StoreWebView] inject cookies authStored=${WebAuthCookieStore.hasStoredAuth} '
+        'cartCookie=${rawCookie != null && rawCookie.isNotEmpty} '
+        'cartToken=${cartToken != null && cartToken.isNotEmpty}',
       );
     }
     if (rawCookie == null || rawCookie.isEmpty) return;
@@ -680,7 +689,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     _pendingAuthCheck = _WebAuthPendingCheck.none;
 
     if (await _waitForWebViewSession()) {
-      WebSessionCache.markValid();
+      await WebSessionCache.markValid();
       _authBootstrapDone = true;
       _autoLoginSubmitted = true;
       if (kDebugMode) {
@@ -704,8 +713,8 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _fallbackToFormLoginOrTarget();
   }
 
-  void _markWebSessionEstablished() {
-    WebSessionCache.markValid();
+  Future<void> _markWebSessionEstablished() async {
+    await WebSessionCache.markValid();
     _autoLoginSubmitted = true;
   }
 
@@ -715,9 +724,9 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     // Turnstile challenge on every subsequent WebView open.
     await _injectStoreCartCookies();
 
-    if (WebSessionCache.isFresh) {
+    if (WebSessionCache.isFresh || WebAuthCookieStore.hasStoredAuth) {
       if (kDebugMode) {
-        debugPrint('[StoreWebView] fast path — reuse recent WebView session');
+        debugPrint('[StoreWebView] fast path — persisted web session cookies');
       }
       _pendingAuthCheck = _WebAuthPendingCheck.fastPathReuse;
       if (_addQueue.isNotEmpty) {
@@ -841,7 +850,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     }
 
     if (sessionOk) {
-      _markWebSessionEstablished();
+      await _markWebSessionEstablished();
       if (kDebugMode) {
         debugPrint('[StoreWebView] WebView session verified after bridge');
       }
@@ -923,7 +932,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     _authBootstrapDone = true;
     final bridged = await _tryJwtCookieBridge();
     if (bridged && await _waitForWebViewSession(maxMs: 400)) {
-      _markWebSessionEstablished();
+      await _markWebSessionEstablished();
       await _continueAfterAuthBootstrap('');
       return;
     }

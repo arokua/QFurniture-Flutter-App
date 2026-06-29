@@ -46,14 +46,14 @@ class _MoreScreenState extends State<MoreScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Text(
-                'After checkout',
+                'Setting',
                 style: Theme.of(ctx).textTheme.titleMedium,
               ),
             ),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(
-                'Where to go when an order is placed (website checkout or wholesale proceed).',
+                'Where to go after you complete checkout.',
                 style: TextStyle(fontSize: 13),
               ),
             ),
@@ -241,12 +241,20 @@ class _MoreScreenState extends State<MoreScreen> {
               onTap: () => context.push(AppRoutes.orders),
             ),
           if (session != null)
-            ListTile(
-              leading: const Icon(Icons.flag_outlined),
-              title: const Text('After checkout'),
-              subtitle: Text(PostCheckoutDestinationPreference.label(_postCheckoutDest)),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _pickPostCheckoutDestination,
+            Tooltip(
+              message:
+                  'Choose where the app goes after you finish checkout '
+                  '(catalogue, order history, or my-account on the website).',
+              preferBelow: false,
+              child: ListTile(
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Setting'),
+                subtitle: Text(
+                  PostCheckoutDestinationPreference.label(_postCheckoutDest),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _pickPostCheckoutDestination,
+              ),
             ),
         ],
       ),

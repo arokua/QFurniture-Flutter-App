@@ -8,6 +8,8 @@ import 'config/store_cart_api_service.dart';
 import 'features/cart/data/cart_remote_sync_binding.dart';
 import 'services/product_sync_service.dart';
 import 'services/product_image_cache_service.dart';
+import 'services/web_auth_cookie_store.dart';
+import 'services/web_session_cache.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -22,6 +24,8 @@ void main() async {
 
   // Initialise cart session (cookie-based WooCommerce cart)
   await StoreCartApiService.instance.init();
+  await WebAuthCookieStore.init();
+  await WebSessionCache.init();
 
   // Initialise auth (restores persisted JWT session if present).
   await AuthService.instance.init();

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
 import 'web_session_cache.dart';
+import 'web_auth_cookie_store.dart';
 import '../utils/user_facing_errors.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,6 +191,7 @@ class AuthService extends ChangeNotifier {
     _lastAuthPassword = null;
     _clearWebSessionCodeCache();
     WebSessionCache.clear();
+    WebAuthCookieStore.clear();
     await _prefs?.remove(_webLoginEmailKey);
     await _prefs?.remove(_webLoginPasswordKey);
     await _prefs?.remove(_refreshTokenKey);
@@ -200,7 +202,7 @@ class AuthService extends ChangeNotifier {
     try {
       StoreCartApiService.instance.setJwtToken(null);
       StoreCartApiService.setJwtFallback(null);
-      await StoreCartApiService.instance.clearSession();
+      await StoreCartApiService.instance.clearAllSessions();
       await StoreCartApiService.instance.clearEmbeddedWebViewCookies();
     } catch (_) {}
   }
@@ -479,7 +481,7 @@ class AuthService extends ChangeNotifier {
 
   /// Mints a short-lived one-time code used to log the in-app WebView into the
   /// website WITHOUT the wp-login form (which triggers the Cerber captcha).
-  /// Requires the Qtoys mobile-session bridge plugin. Returns null on failure.
+  /// Requires the Qtoys JWT Cookie Bridge plugin (localDocs/qtoys-jwt-cookie-bridge-plugin.php).
   Future<String?> mintWebSessionCode() async {
     final token = jwtToken;
     if (token == null || token.isEmpty) return null;
@@ -498,7 +500,7 @@ class AuthService extends ChangeNotifier {
         if (kDebugMode) {
           debugPrint(
             '[Auth] mintWebSessionCode HTTP ${resp.statusCode} '
-            '(deploy qtoys plugin v1.2+ for /mobile-session/code)',
+            '(deploy qtoys-jwt-cookie-bridge v1.3+ for /mobile-session/code)',
           );
         }
         return null;

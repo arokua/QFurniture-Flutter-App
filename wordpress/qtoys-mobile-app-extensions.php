@@ -5,7 +5,7 @@
  * Version: 1.0.3
  * Author: Qtoys
  *
- * Deploy alongside qtoys-mobile-session (v1.2+). Provides:
+ * Deploy alongside qtoys-jwt-cookie-bridge (v1.3+). Provides:
  *   GET /wp-json/qtoys/v1/my-orders
  * Returns WooCommerce orders for the JWT-authenticated user.
  */
@@ -23,7 +23,7 @@ add_action('rest_api_init', function () {
 });
 
 /**
- * Resolve WP user id from Bearer JWT (reuses qtoys-mobile-session helpers when present).
+ * Resolve WP user id from Bearer JWT (reuses qtoys-jwt-cookie-bridge helpers when present).
  */
 function qtoys_rest_resolve_user_id_from_request(WP_REST_Request $request) {
     $token = '';

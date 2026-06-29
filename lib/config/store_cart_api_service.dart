@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'store_config.dart';
+import '../services/web_auth_cookie_store.dart';
+import '../services/web_session_cache.dart';
 
 /// WooCommerce Store API (wc/store/v1) cart: add, remove, update.
 /// Cart is session-based; we persist cookie from first add so remove/update work.
@@ -167,11 +169,11 @@ class StoreCartApiService {
       _absorbResponse(response);
 
   /// Force-create/refresh Woo Store API session after JWT login.
-  /// Calls your JWT->cookie bridge, then primes Store API cart session.
+  /// Calls your JWT->cookie bridge, persists WP auth cookies, then primes cart.
   Future<bool> bootstrapSessionFromJwt(String? jwt) async {
     final token = jwt?.trim();
     if (token == null || token.isEmpty) return false;
-    await _postJwtCookieBridge(token, source: 'flutter_app_login');
+    await _runJwtMobileSessionBridge(token: token, source: 'flutter_app_login');
     try {
       final cart = await fetchFullCart();
       if (cart.success && cart.data != null) {
@@ -183,16 +185,37 @@ class StoreCartApiService {
     }
   }
 
+  /// Refresh persisted WP auth cookies from the JWT bridge (no WebView navigation).
+  Future<bool> persistWebAuthCookiesFromBridge() async {
+    if (kIsWeb) return false;
+    final token = (_jwtToken?.isNotEmpty == true) ? _jwtToken! : _jwtFallback;
+    if (token == null || token.isEmpty) return false;
+    return _runJwtMobileSessionBridge(
+      token: token,
+      source: 'flutter_app_persist',
+    );
+  }
+
   /// POST `/wp-json/qtoys/v1/mobile-session` and mirror Set-Cookie into the
   /// WebView jar + app cart session. Returns true when WP auth cookies arrived.
-  /// Never navigates the WebView to a REST URL (WAF/Cerber safe).
   Future<bool> establishWebSessionForWebView(
     WebViewCookieManager cookieManager,
   ) async {
     if (kIsWeb) return false;
     final token = (_jwtToken?.isNotEmpty == true) ? _jwtToken! : _jwtFallback;
     if (token == null || token.isEmpty) return false;
+    return _runJwtMobileSessionBridge(
+      token: token,
+      source: 'flutter_app_webview',
+      cookieManager: cookieManager,
+    );
+  }
 
+  Future<bool> _runJwtMobileSessionBridge({
+    required String token,
+    required String source,
+    WebViewCookieManager? cookieManager,
+  }) async {
     final client = HttpClient();
     try {
       final req = await client.postUrl(Uri.parse(jwtCookieBridgeUrl));
@@ -200,59 +223,61 @@ class StoreCartApiService {
       req.headers.set('Accept', 'application/json');
       req.headers.set('Content-Type', 'application/json');
       req.headers.set('User-Agent', kAppUserAgent);
-      req.write(jsonEncode({'source': 'flutter_app_webview'}));
+      req.write(jsonEncode({'source': source}));
       final resp = await req.close();
       final body = await resp.transform(utf8.decoder).join();
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         if (kDebugMode) {
           debugPrint(
-            '[StoreCart] web session bridge HTTP ${resp.statusCode} '
+            '[StoreCart] mobile-session HTTP ${resp.statusCode} '
             'body=${body.length > 120 ? '${body.substring(0, 120)}…' : body}',
           );
         }
         return false;
       }
 
-      final hadAuth = await _mirrorSetCookiesToWebView(
-        resp.headers,
-        cookieManager,
-      );
+      await WebAuthCookieStore.saveFromHttpHeaders(resp.headers);
       await _absorbSetCookieHeaders(resp.headers);
-      if (kDebugMode) {
-        debugPrint(
-          '[StoreCart] web session bridge ok authCookies=$hadAuth',
+
+      var hadAuth = _headersContainAuthCookie(resp.headers);
+      if (cookieManager != null) {
+        final mirrored = await _mirrorSetCookiesToWebView(
+          resp.headers,
+          cookieManager,
         );
+        hadAuth = hadAuth || mirrored;
+      }
+      if (hadAuth) {
+        await WebSessionCache.markValid();
+      }
+      if (kDebugMode) {
+        debugPrint('[StoreCart] mobile-session ok authCookies=$hadAuth');
       }
       return hadAuth;
     } catch (e) {
-      if (kDebugMode) debugPrint('[StoreCart] web session bridge error: $e');
+      if (kDebugMode) debugPrint('[StoreCart] mobile-session error: $e');
       return false;
     } finally {
       client.close(force: true);
     }
   }
 
-  Future<void> _postJwtCookieBridge(
-    String token, {
-    required String source,
-  }) async {
-    try {
-      final res = await http
-          .post(
-            Uri.parse(jwtCookieBridgeUrl),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'User-Agent': kAppUserAgent,
-            },
-            body: jsonEncode({'source': source}),
-          )
-          .timeout(const Duration(seconds: 15));
-      await _absorbResponse(res);
-    } catch (_) {
-      // Cart prime may still succeed with JWT Bearer alone.
-    }
+  bool _headersContainAuthCookie(HttpHeaders headers) {
+    var found = false;
+    headers.forEach((name, values) {
+      if (name.toLowerCase() != 'set-cookie') return;
+      for (final header in values) {
+        final first = header.split(';').first.trim();
+        final eq = first.indexOf('=');
+        if (eq <= 0) continue;
+        final cookieName = first.substring(0, eq).trim().toLowerCase();
+        if (cookieName.startsWith('wordpress_logged_in') ||
+            cookieName.startsWith('wordpress_sec_')) {
+          found = true;
+        }
+      }
+    });
+    return found;
   }
 
   Future<bool> _mirrorSetCookiesToWebView(
@@ -620,6 +645,12 @@ class StoreCartApiService {
     _cartToken = null;
     await _prefs?.remove('cart_session_cookie');
     await _prefs?.remove('cart_cart_token');
+  }
+
+  /// Clears cart session + persisted WebView WP auth cookies (sign-out).
+  Future<void> clearAllSessions() async {
+    await clearSession();
+    await WebAuthCookieStore.clear();
   }
 
   /// Clears platform WebView cookie jar so Woo auth/cart does not survive app logout.
