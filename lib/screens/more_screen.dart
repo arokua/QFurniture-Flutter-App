@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
-import '../config/post_checkout_destination_preference.dart';
 import '../config/store_config.dart';
 import '../features/catalog/presentation/store_webview_screen.dart';
 import '../services/auth_service.dart';
@@ -23,57 +22,9 @@ String _accountRoleLabel(String role) {
   }
 }
 
-/// Profile tab: cart, account tools, and display preferences.
-class MoreScreen extends StatefulWidget {
+/// Profile tab: cart and account tools.
+class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
-
-  @override
-  State<MoreScreen> createState() => _MoreScreenState();
-}
-
-class _MoreScreenState extends State<MoreScreen> {
-  PostCheckoutDestination _postCheckoutDest =
-      PostCheckoutDestinationPreference.current;
-
-  Future<void> _pickPostCheckoutDestination() async {
-    final picked = await showModalBottomSheet<PostCheckoutDestination>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(
-                'Setting',
-                style: Theme.of(ctx).textTheme.titleMedium,
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Text(
-                'Where to go after you complete checkout.',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
-            ...PostCheckoutDestination.values.map(
-              (d) => RadioListTile<PostCheckoutDestination>(
-                title: Text(PostCheckoutDestinationPreference.label(d)),
-                value: d,
-                groupValue: _postCheckoutDest,
-                onChanged: (v) => Navigator.pop(ctx, v),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-    if (picked == null || !mounted) return;
-    await PostCheckoutDestinationPreference.set(picked);
-    setState(() => _postCheckoutDest = picked);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -239,22 +190,6 @@ class _MoreScreenState extends State<MoreScreen> {
               subtitle: const Text('View and reorder past invoices'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => context.push(AppRoutes.orders),
-            ),
-          if (session != null)
-            Tooltip(
-              message:
-                  'Choose where the app goes after you finish checkout '
-                  '(catalogue, order history, or my-account on the website).',
-              preferBelow: false,
-              child: ListTile(
-                leading: const Icon(Icons.settings_outlined),
-                title: const Text('Setting'),
-                subtitle: Text(
-                  PostCheckoutDestinationPreference.label(_postCheckoutDest),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _pickPostCheckoutDestination,
-              ),
             ),
         ],
       ),
