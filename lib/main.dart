@@ -9,6 +9,7 @@ import 'services/product_sync_service.dart';
 import 'services/product_image_cache_service.dart';
 import 'services/web_auth_cookie_store.dart';
 import 'services/web_session_cache.dart';
+import 'services/order_history_sync_service.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -25,6 +26,8 @@ void main() async {
   await StoreCartApiService.instance.init();
   await WebAuthCookieStore.init();
   await WebSessionCache.init();
+
+  await OrderHistorySyncService.instance.init();
 
   // Initialise auth (restores persisted JWT session if present).
   await AuthService.instance.init();

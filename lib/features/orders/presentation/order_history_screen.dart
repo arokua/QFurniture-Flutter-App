@@ -1,204 +1,12 @@
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
-import '../../../app_router.dart';
 import '../../../config/store_config.dart';
-import '../../../config/store_cart_api_service.dart';
-import '../../../providers.dart';
 import '../../../services/auth_service.dart';
-import '../../../services/woo_commerce_rest_api.dart';
 import '../../../utils/money_format.dart';
-import '../../cart/data/cart_provider.dart';
-import '../../cart/data/woo_cart_provider.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
-import '../domain/woo_order_summary.dart';
-
-class OrderHistoryLoadResult {
-  const OrderHistoryLoadResult({
-    required this.orders,
-    this.webViewFallback = false,
-  });
-
-  final List<WooOrderSummary> orders;
-  final bool webViewFallback;
-}
-
-final orderHistoryProvider =
-    FutureProvider.autoDispose<OrderHistoryLoadResult>((ref) async {
-  final auth = AuthService.instance;
-  await auth.ensureValidSession();
-  final s = auth.currentSession;
-  final token = s?.token;
-  if (token == null || token.isEmpty) {
-    return const OrderHistoryLoadResult(orders: []);
-  }
-
-  final cid =
-      s?.customerId ?? await auth.ensureCustomerIdForCurrentSession(force: true);
-  final email = await auth.resolvedAccountEmail();
-  final wpUserId = auth.wpUserIdFromCurrentToken;
-
-  if (kDebugMode) {
-    debugPrint(
-      '[OrderHistory] fetch customerId=$cid wpUserId=$wpUserId email=$email',
-    );
-  }
-
-  final orders = await WooCommerceRestApi.instance.fetchOrdersForUser(
-    jwt: token,
-    customerId: cid,
-    wpUserId: wpUserId,
-    customerEmail: email,
-  );
-  if (orders.isNotEmpty) {
-    return OrderHistoryLoadResult(orders: orders);
-  }
-
-  if (cid == null && wpUserId == null) {
-    if (kDebugMode) {
-      debugPrint('[OrderHistory] customer id unresolved — WebView fallback');
-    }
-    return const OrderHistoryLoadResult(orders: [], webViewFallback: true);
-  }
-
-  return const OrderHistoryLoadResult(orders: []);
-});
-
-Future<void> reorderFromOrder(
-  BuildContext context,
-  WidgetRef ref,
-  WooOrderSummary order,
-) async {
-  final session = AuthService.instance.currentSession;
-  final token = session?.token;
-  var cid = session?.customerId;
-  cid ??= await AuthService.instance.ensureCustomerIdForCurrentSession();
-  if (token == null || token.isEmpty || cid == null) return;
-
-  WooOrderSummary detail = order;
-  if (order.lineItems.isEmpty) {
-    final d = await WooCommerceRestApi.instance.fetchOrderById(
-      jwt: token,
-      orderId: order.id,
-      customerId: cid,
-    );
-    if (d == null) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not load order lines.')),
-        );
-      }
-      return;
-    }
-    detail = d;
-  }
-
-  final repo = ref.read(productRepoProvider);
-  final merged = <int, int>{};
-  for (final line in detail.lineItems) {
-    if (line.productId <= 0 || line.quantity <= 0) continue;
-    merged[line.productId] = (merged[line.productId] ?? 0) + line.quantity;
-  }
-
-  final shortfalls = <String>[];
-  final toAdd = <({int productId, int qty})>[];
-
-  for (final e in merged.entries) {
-    final productId = e.key;
-    final requested = e.value;
-    final p = await repo.getById(productId);
-    if (p == null) {
-      shortfalls.add('Product #$productId is no longer in the catalogue.');
-      continue;
-    }
-    if (!p.inStock) {
-      shortfalls.add('${p.name}: out of stock.');
-      continue;
-    }
-    final avail = p.parsedStockQuantityApprox;
-    if (avail != null && requested > avail) {
-      shortfalls.add(
-        '${p.name}: only $avail available (order had $requested).',
-      );
-      toAdd.add((productId: productId, qty: avail));
-    } else {
-      toAdd.add((productId: productId, qty: requested));
-    }
-  }
-
-  toAdd.removeWhere((e) => e.qty <= 0);
-
-  if (toAdd.isEmpty) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            shortfalls.isEmpty
-                ? 'Nothing could be added to the cart.'
-                : shortfalls.join('\n'),
-          ),
-        ),
-      );
-    }
-    return;
-  }
-
-  if (shortfalls.isNotEmpty && context.mounted) {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Stock availability'),
-        content: SingleChildScrollView(
-          child: Text(
-            '${shortfalls.join('\n')}\n\n'
-            'Add available quantities to your cart?',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Add to cart'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-  }
-
-  final cart = ref.read(cartProvider.notifier);
-  for (final t in toAdd) {
-    cart.add(t.productId, quantity: t.qty);
-    await StoreCartApiService.instance.addItem(t.productId, quantity: t.qty);
-  }
-  ref.invalidate(wooCartProvider);
-
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Added ${toAdd.length} product line(s). Open cart to checkout.',
-        ),
-      ),
-    );
-    context.push(AppRoutes.cart);
-  }
-}
-
-void openOrderHistoryWebView(BuildContext context) {
-  StoreWebViewScreen.push(
-    context,
-    storeMyAccountOrdersUrl,
-    attemptWebLogin: AuthService.instance.currentSession != null,
-    useMobileLayout: true,
-  );
-}
+import 'order_history_notifier.dart';
 
 class OrderHistoryScreen extends ConsumerWidget {
   const OrderHistoryScreen({super.key});
@@ -234,11 +42,10 @@ class OrderHistoryScreen extends ConsumerWidget {
             )
           : RefreshIndicator(
               onRefresh: () async {
-                ref.invalidate(orderHistoryProvider);
-                await ref.read(orderHistoryProvider.future);
+                await ref.read(orderHistoryProvider.notifier).silentRefresh();
               },
               child: async.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () => const _OrderHistorySkeleton(),
                 error: (e, _) => _OrderHistoryFallback(
                   message: 'Could not load orders: $e',
                   onOpenWebView: () => openOrderHistoryWebView(context),
@@ -375,6 +182,69 @@ class OrderHistoryScreen extends ConsumerWidget {
                 },
               ),
             ),
+    );
+  }
+}
+
+class _OrderHistorySkeleton extends StatelessWidget {
+  const _OrderHistorySkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: List.generate(
+        4,
+        (_) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Card(
+            child: SizedBox(
+              height: 88,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            height: 14,
+                            width: 120,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            height: 12,
+                            width: 180,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      height: 14,
+                      width: 56,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

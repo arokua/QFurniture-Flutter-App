@@ -10,6 +10,12 @@ class WooOrderLineItem {
   final int quantity;
   final String name;
 
+  Map<String, dynamic> toJson() => {
+        'product_id': productId,
+        'quantity': quantity,
+        'name': name,
+      };
+
   factory WooOrderLineItem.fromJson(Map<String, dynamic> j) {
     final pidRaw = j['product_id'];
     final productId =
@@ -47,6 +53,17 @@ class WooOrderSummary {
   final String currency;
   final int? customerId;
   final List<WooOrderLineItem> lineItems;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'number': number,
+        'status': status,
+        'date_created': dateCreated.toUtc().toIso8601String(),
+        'total': total,
+        'currency': currency,
+        if (customerId != null) 'customer_id': customerId,
+        'line_items': lineItems.map((e) => e.toJson()).toList(),
+      };
 
   factory WooOrderSummary.fromJson(Map<String, dynamic> j) {
     final idVal = j['id'];

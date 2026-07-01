@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
+import '../../../services/order_history_sync_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../../config/store_cart_api_service.dart';
@@ -92,6 +94,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
   final List<Timer> _loginPrefillTimers = [];
   bool _checkoutCompleted = false;
   bool _postCheckoutRedirectStarted = false;
+  String? _checkoutThankYouUrl;
   _WebAuthPendingCheck _pendingAuthCheck = _WebAuthPendingCheck.none;
   bool _fullBridgeInFlight = false;
 
@@ -120,6 +123,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
 
     _postCheckoutRedirectStarted = true;
     _checkoutCompleted = true;
+    _checkoutThankYouUrl = url;
 
     if (kDebugMode) {
       debugPrint('[StoreWebView] checkout complete — redirecting ($url)');
@@ -132,8 +136,15 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     await _syncAfterWebView();
     if (!mounted) return;
 
+    final orderId = parseOrderIdFromThankYouUrl(url);
+    final orderNumber =
+        parseOrderNumberFromThankYouUrl(url) ?? (orderId != null ? '$orderId' : '—');
+
     context.pop();
-    PostCheckoutNavigation.go();
+    await CheckoutConfirmation.showFromRoot(
+      orderNumber: orderNumber,
+      orderId: orderId,
+    );
   }
 
   @override
@@ -316,7 +327,14 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     if (!alreadyRedirected) {
       context.pop();
       if (completed) {
-        PostCheckoutNavigation.go();
+        final thankYouUrl = _checkoutThankYouUrl ?? '';
+        final orderId = parseOrderIdFromThankYouUrl(thankYouUrl);
+        final orderNumber = parseOrderNumberFromThankYouUrl(thankYouUrl) ??
+            (orderId != null ? '$orderId' : '—');
+        await CheckoutConfirmation.showFromRoot(
+          orderNumber: orderNumber,
+          orderId: orderId,
+        );
       }
     }
   }

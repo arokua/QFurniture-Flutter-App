@@ -27,7 +27,10 @@ abstract class AppRoutes {
   static String product(int id) => '/p/$id';
 }
 
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 final router = GoRouter(
+  navigatorKey: rootNavigatorKey,
   initialLocation: AppRoutes.root,
   debugLogDiagnostics: true,
   refreshListenable: AuthService.instance,

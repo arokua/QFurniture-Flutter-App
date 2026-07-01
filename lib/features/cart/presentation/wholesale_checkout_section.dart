@@ -8,8 +8,9 @@ import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
+import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
-import '../../orders/presentation/order_history_screen.dart';
+import '../../orders/presentation/order_history_notifier.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
 
@@ -129,17 +130,17 @@ class _WholesaleCheckoutSectionState
       final order = result.order!;
       if (!mounted) return;
 
-      final messenger = ScaffoldMessenger.of(context);
+      final rootContext = Navigator.of(context, rootNavigator: true).context;
+      if (!context.mounted) return;
       Navigator.of(context).pop(); // close wholesale checkout sheet
 
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Order #${order.number} has been submitted.'),
-          duration: const Duration(seconds: 4),
-        ),
+      if (!rootContext.mounted) return;
+      await CheckoutConfirmation.showAndContinue(
+        context: rootContext,
+        orderNumber: order.number,
+        orderId: order.id,
+        order: order,
       );
-
-      PostCheckoutNavigation.go();
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

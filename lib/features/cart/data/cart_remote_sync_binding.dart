@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../services/auth_service.dart';
+import '../../../services/order_history_sync_service.dart';
 import 'woo_cart_provider.dart';
 
 /// Refreshes the WooCommerce cart when the app returns to the foreground and
@@ -42,6 +43,7 @@ class _CartRemoteSyncBindingState extends ConsumerState<CartRemoteSyncBinding>
   void _invalidateCartIfSignedIn() {
     if (!AuthService.instance.isSignedIn) return;
     ref.invalidate(wooCartProvider);
+    OrderHistorySyncService.instance.syncNow().ignore();
   }
 
   @override

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../app_router.dart';
 import '../services/auth_service.dart';
 import '../services/product_sync_service.dart';
+import '../services/order_history_sync_service.dart';
 import '../config/store_cart_api_service.dart';
 
 /// Branded splash screen showing the qtoys logo (QIcon2.png).
@@ -71,6 +72,7 @@ class _SplashScreenState extends State<SplashScreen>
     await StoreCartApiService.instance
         .bootstrapSessionFromJwt(auth.jwtToken);
     auth.warmWebSessionCode().ignore();
+    OrderHistorySyncService.instance.syncNow(force: true).ignore();
 
     if (!mounted) return;
     context.go(AppRoutes.home);

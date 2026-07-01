@@ -856,11 +856,20 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
       final items = widget.snapshot.lines
           .map((l) => (productId: l.productId, quantity: l.quantity))
           .toList();
+
+      await StoreCartApiService.instance
+          .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
+      final remote = await StoreCartApiService.instance.fetchFullCart();
+      final remoteItems = remote.data?['items'];
+      final serverHasCart =
+          remote.success && remoteItems is List && remoteItems.isNotEmpty;
+      final skipAddQueue = serverHasCart && items.isNotEmpty;
+
       StoreWebViewScreen.push(
         context,
         storeCheckoutUrl,
         attemptWebLogin: AuthService.instance.currentSession != null,
-        addToCartItems: items.isEmpty ? null : items,
+        addToCartItems: skipAddQueue ? null : (items.isEmpty ? null : items),
       );
     } finally {
       if (mounted) setState(() => _isSyncing = false);
