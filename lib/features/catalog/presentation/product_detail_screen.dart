@@ -393,7 +393,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   );
                 },
                 icon: const Icon(Icons.open_in_browser, size: 20),
-                label: const Text('Open on store website'),
+                label: const Text('Open on website'),
               ),
             ],
           ],
