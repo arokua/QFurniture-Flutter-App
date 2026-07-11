@@ -9,6 +9,7 @@ import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
 import 'web_session_cache.dart';
 import 'order_history_sync_service.dart';
+import 'cart_sync_service.dart';
 import 'web_auth_cookie_store.dart';
 import '../utils/user_facing_errors.dart';
 
@@ -194,6 +195,7 @@ class AuthService extends ChangeNotifier {
     WebSessionCache.clear();
     WebAuthCookieStore.clear();
     await OrderHistorySyncService.instance.clearOnSignOut();
+    await CartSyncService.instance.clearOnSignOut();
     await _prefs?.remove(_webLoginEmailKey);
     await _prefs?.remove(_webLoginPasswordKey);
     await _prefs?.remove(_refreshTokenKey);

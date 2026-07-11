@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/order_history_sync_service.dart';
+import '../../../widgets/local_sync_status_chip.dart';
 import '../../../utils/money_format.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
 import 'order_history_notifier.dart';
@@ -132,6 +134,7 @@ class OrderHistoryScreen extends ConsumerWidget {
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             children: [
+                              LocalSyncStatusChip.order(order: o),
                               if (o.lineItems.isEmpty)
                                 const ListTile(
                                   dense: true,

@@ -1,15 +1,12 @@
-import 'dart:convert';
+import 'dart:async';
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 
-import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_config.dart';
+import '../../../services/cart_cache_service.dart';
+import '../../../services/cart_sync_service.dart';
 import '../../../services/auth_service.dart';
 import '../domain/cart_item.dart';
 import 'cart_session_refresh.dart';
-import 'store_cart_json.dart';
 import 'store_cart_snapshot.dart';
 
 /// Full cart state returned by the WooCommerce Store API.
@@ -18,32 +15,88 @@ class WooCartState {
     required this.items,
     this.snapshot,
     this.rawJson,
+    this.syncStatus = CartSyncStatus.idle,
+    this.fromCache = false,
+    this.lastSyncError,
   });
 
   final List<CartItem> items;
   final StoreCartApiSnapshot? snapshot;
   final Map<String, dynamic>? rawJson;
+  final CartSyncStatus syncStatus;
+  final bool fromCache;
+  final String? lastSyncError;
 
   bool get isEmpty => items.isEmpty;
 
   static const empty = WooCartState(items: []);
 }
 
-/// Fetches `/wp-json/wc/store/v1/cart` with the persisted Cart-Token / cookies.
+/// Cache-first cart: read JSON immediately, sync WooCommerce in background.
 class WooCartNotifier extends AsyncNotifier<WooCartState> {
   @override
-  Future<WooCartState> build() => _fetch();
-
-  Future<WooCartState> _fetch() async {
+  Future<WooCartState> build() async {
     if (!AuthService.instance.isSignedIn) return WooCartState.empty;
 
+    final cached = await CartSyncService.instance.readCached();
+    if (cached != null && cached.items.isNotEmpty) {
+      unawaited(_refreshInBackground());
+      return _fromCache(cached);
+    }
+
+    final synced = await CartSyncService.instance.syncNow(force: true);
+    if (synced != null && synced.items.isNotEmpty) {
+      return _fromCache(synced, fromCache: false);
+    }
+
+    try {
+      return await _fetchNetwork();
+    } catch (e) {
+      if (cached != null) return _fromCache(cached);
+      rethrow;
+    }
+  }
+
+  WooCartState _fromCache(CartCacheRecord record, {bool fromCache = true}) {
+    final snapshot = CartSyncService.instance.snapshotFromRecord(record);
+    return WooCartState(
+      items: record.items,
+      snapshot: snapshot,
+      rawJson: record.snapshotJson,
+      syncStatus: record.syncStatus,
+      fromCache: fromCache,
+      lastSyncError: record.lastSyncError,
+    );
+  }
+
+  Future<void> _refreshInBackground() async {
+    final fresh = await CartSyncService.instance.syncNow(force: true);
+    if (fresh == null) return;
+    final next = _fromCache(fresh, fromCache: false);
+    final current = state.valueOrNull;
+    if (current == null || _changed(current, next)) {
+      state = AsyncData(next);
+    }
+  }
+
+  bool _changed(WooCartState a, WooCartState b) {
+    if (a.items.length != b.items.length) return true;
+    if (a.syncStatus != b.syncStatus) return true;
+    for (var i = 0; i < a.items.length; i++) {
+      if (a.items[i].productId != b.items[i].productId ||
+          a.items[i].quantity != b.items[i].quantity) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<WooCartState> _fetchNetwork() async {
     await ensureCartJwtFresh();
 
     var state = await _fetchWithCurrentSession();
     if (state != null) return state;
 
-    // Session may have expired — re-bootstrap once, then retry.
-    if (kDebugMode) debugPrint('[WooCart] retry after session re-bootstrap');
     await rebootstrapCartSession();
     state = await _fetchWithCurrentSession();
     if (state != null) return state;
@@ -52,66 +105,14 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
   }
 
   Future<WooCartState?> _fetchWithCurrentSession() async {
-    final jwt = AuthService.instance.jwtToken ?? '';
-    final cookie = StoreCartApiService.instance.cookie ?? '';
-    final cartToken = StoreCartApiService.instance.cartToken ?? '';
-
-    final headers = <String, String>{
-      'Accept': 'application/json',
-      'User-Agent': kAppUserAgent,
-      // Bypass FastCGI/Cloudflare cache — a cached /cart returns an empty
-      // guest cart regardless of the Cart-Token we send.
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-    };
-    if (jwt.isNotEmpty) headers['Authorization'] = 'Bearer $jwt';
-    if (cookie.isNotEmpty) headers['Cookie'] = cookie;
-    if (cartToken.isNotEmpty) headers['Cart-Token'] = cartToken;
-
-    final url = StoreCartApiService.bustCache(
-      Uri.parse('$kStoreBaseUrl/wp-json/wc/store/v1/cart'),
-    );
-    if (kDebugMode) debugPrint('[WooCart] GET $url cartToken=${cartToken.isNotEmpty}');
-
-    http.Response res;
-    try {
-      res = await http
-          .get(url, headers: headers)
-          .timeout(const Duration(seconds: 15));
-    } catch (e) {
-      if (kDebugMode) debugPrint('[WooCart] network error: $e');
-      return null;
-    }
-
-    if (kDebugMode) {
-      debugPrint('[WooCart] → ${res.statusCode} len=${res.body.length}');
-    }
-
-    if (res.statusCode != 200) return null;
-
-    await StoreCartApiService.instance.absorbResponseHeaders(res);
-
-    final Map<String, dynamic> data;
-    try {
-      data = jsonDecode(res.body) as Map<String, dynamic>;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[WooCart] JSON parse failed: $e');
-      return null;
-    }
-
-    await StoreCartApiService.instance.absorbCartSessionFromCartJson(data);
-
-    final items = cartItemsFromStoreCartJson(data);
-    final snapshot = StoreCartApiSnapshot.fromCartJson(data);
-
-    if (kDebugMode) debugPrint('[WooCart] parsed ${items.length} items');
-
-    return WooCartState(items: items, snapshot: snapshot, rawJson: data);
+    final synced = await CartSyncService.instance.syncNow(force: true);
+    if (synced == null || synced.items.isEmpty) return null;
+    return _fromCache(synced, fromCache: false);
   }
 
   Future<void> refresh() async {
     state = const AsyncLoading();
-    state = await AsyncValue.guard(_fetch);
+    state = await AsyncValue.guard(build);
   }
 }
 

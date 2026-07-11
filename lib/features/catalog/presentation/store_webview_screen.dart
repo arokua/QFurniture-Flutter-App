@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../services/cart_sync_service.dart';
 import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
 import '../../../services/order_history_sync_service.dart';
@@ -141,7 +142,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
         parseOrderNumberFromThankYouUrl(url) ?? (orderId != null ? '$orderId' : '—');
 
     context.pop();
-    await CheckoutConfirmation.showFromRoot(
+    await CheckoutConfirmation.complete(
       orderNumber: orderNumber,
       orderId: orderId,
     );
@@ -331,7 +332,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
         final orderId = parseOrderIdFromThankYouUrl(thankYouUrl);
         final orderNumber = parseOrderNumberFromThankYouUrl(thankYouUrl) ??
             (orderId != null ? '$orderId' : '—');
-        await CheckoutConfirmation.showFromRoot(
+        await CheckoutConfirmation.complete(
           orderNumber: orderNumber,
           orderId: orderId,
         );
@@ -1175,6 +1176,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       await ref.read(cartProvider.notifier).refreshFromRemote();
     }
     if (!mounted) return;
+    await CartSyncService.instance.syncNow(force: true);
     ref.invalidate(wooCartProvider);
   }
 

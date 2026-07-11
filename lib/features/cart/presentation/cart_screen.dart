@@ -17,6 +17,9 @@ import '../../../utils/money_format.dart';
 
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/cart_cache_service.dart';
+import '../../../services/cart_sync_service.dart';
+import '../../../widgets/local_sync_status_chip.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
 import '../../orders/data/wholesale_moq_provider.dart';
 import 'wholesale_checkout_section.dart';
@@ -152,6 +155,9 @@ class _CartScreenBody extends ConsumerWidget {
       data: (woo) {
         final snap = woo.snapshot;
         if (snap == null || snap.isEmpty) {
+          if (woo.items.isNotEmpty) {
+            return _GuestCartScaffold(items: woo.items);
+          }
           return _emptyScaffold(context, ref, isWholesale: isWholesaleCheckout);
         }
         return _loadedScaffold(
@@ -159,6 +165,9 @@ class _CartScreenBody extends ConsumerWidget {
           ref,
           snap: snap,
           isWholesale: isWholesaleCheckout,
+          syncStatus: woo.syncStatus,
+          fromCache: woo.fromCache,
+          syncError: woo.lastSyncError,
         );
       },
     );
@@ -168,6 +177,7 @@ class _CartScreenBody extends ConsumerWidget {
   static Future<void> _onRefreshCart(WidgetRef ref) async {
     if (AuthService.instance.isSignedIn) {
       await rebootstrapCartSession();
+      await CartSyncService.instance.syncNow(force: true);
       ref.invalidate(wooCartProvider);
       try {
         await ref.read(wooCartProvider.future);
@@ -270,6 +280,9 @@ class _CartScreenBody extends ConsumerWidget {
     WidgetRef ref, {
     required StoreCartApiSnapshot snap,
     required bool isWholesale,
+    CartSyncStatus syncStatus = CartSyncStatus.idle,
+    bool fromCache = false,
+    String? syncError,
   }) {
     final skuById = ref.watch(catalogSkuByProductIdProvider).valueOrNull ?? const {};
     return Scaffold(
@@ -308,6 +321,13 @@ class _CartScreenBody extends ConsumerWidget {
               child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
+                  SliverToBoxAdapter(
+                    child: LocalSyncStatusChip.cart(
+                      status: syncStatus,
+                      fromCache: fromCache,
+                      error: syncError,
+                    ),
+                  ),
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     sliver: SliverList.builder(
@@ -965,7 +985,7 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
                     FilledButton(
                       onPressed:
                           moqMet ? () => _openWholesaleSheet(context, moqMet) : null,
-                      child: const Text('Payment & proceed'),
+                      child: const Text('Place order'),
                     )
                   else
                     FilledButton.icon(

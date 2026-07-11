@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "q_furniture_app" "\0"
+            VALUE "FileDescription", "q_toys_app" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "q_furniture_app" "\0"
+            VALUE "InternalName", "q_toys_app" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "q_furniture_app.exe" "\0"
-            VALUE "ProductName", "q_furniture_app" "\0"
+            VALUE "OriginalFilename", "q_toys_app.exe" "\0"
+            VALUE "ProductName", "q_toys_app" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

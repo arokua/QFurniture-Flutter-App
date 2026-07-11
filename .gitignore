@@ -48,6 +48,7 @@ assets/images/commandlinetools-win-14742923_latest.zip
 dist/QFurniture-Flutter-App-5e5ccc6a.ipa
 *.ipa
 cursor.md
+.cursor.md
 wordpress/qtoys-mobile-session-get-handler.php
 android/.gradle/8.14.4/executionHistory/executionHistory.bin
 android/.gradle/8.14.4/executionHistory/executionHistory.bin

@@ -69,7 +69,11 @@ class OrderHistoryNotifier extends AutoDisposeAsyncNotifier<OrderHistoryLoadResu
   bool _ordersChanged(List<WooOrderSummary> a, List<WooOrderSummary> b) {
     if (a.length != b.length) return true;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].id != b[i].id || a[i].status != b[i].status) return true;
+      if (a[i].id != b[i].id ||
+          a[i].status != b[i].status ||
+          a[i].syncState != b[i].syncState) {
+        return true;
+      }
     }
     return false;
   }

@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../services/auth_service.dart';
+import '../../../services/cart_sync_service.dart';
 import '../../../services/order_history_sync_service.dart';
 import 'woo_cart_provider.dart';
 
@@ -36,13 +37,16 @@ class _CartRemoteSyncBindingState extends ConsumerState<CartRemoteSyncBinding>
         return;
       }
       if (!AuthService.instance.isSignedIn) return;
-      ref.invalidate(wooCartProvider);
+      CartSyncService.instance.syncNow().ignore();
+      OrderHistorySyncService.instance.syncNow().ignore();
     });
   }
 
   void _invalidateCartIfSignedIn() {
     if (!AuthService.instance.isSignedIn) return;
-    ref.invalidate(wooCartProvider);
+    CartSyncService.instance.syncNow(force: true).then((_) {
+      if (mounted) ref.invalidate(wooCartProvider);
+    }).ignore();
     OrderHistorySyncService.instance.syncNow().ignore();
   }
 

@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/cart_cache_service.dart' show CartSyncStatus;
+import '../../../services/cart_sync_service.dart';
 import '../domain/cart_item.dart';
 import 'store_cart_json.dart';
 import 'store_cart_snapshot.dart';
@@ -114,6 +116,9 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
       'quantity': e.quantity,
     }).toList());
     await prefs.setString(_storageKey(), raw);
+    CartSyncService.instance
+        .writeThroughLocal(items: state, syncStatus: CartSyncStatus.pending)
+        .ignore();
   }
 
   void add(int productId, {int quantity = 1}) {
@@ -154,6 +159,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
   void clear() {
     state = [];
     _saveCart();
+    CartSyncService.instance.clearCurrentCart().ignore();
   }
 
   /// Re-fetch cart items from remote (WooCommerce Store API) and update local state.
@@ -167,6 +173,12 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
           .absorbCartSessionFromCartJson(remote.data!);
       state = remoteItems;
       await _saveCart();
+      if (remote.data != null) {
+        await CartSyncService.instance.writeThroughRemote(
+          items: remoteItems,
+          rawJson: remote.data!,
+        );
+      }
     } catch (_) {
       // Keep local state as-is
     }

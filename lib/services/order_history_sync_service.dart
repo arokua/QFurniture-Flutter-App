@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/local_first_sync_config.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 import '../features/orders/domain/order_history_load_result.dart';
 import 'auth_service.dart';
+import 'local_sync_logger.dart';
 import 'order_history_cache_service.dart';
 import 'woo_commerce_rest_api.dart';
 
@@ -15,7 +17,7 @@ class OrderHistorySyncService {
   static final OrderHistorySyncService instance = OrderHistorySyncService._();
 
   static const _lastSyncKey = 'qf_order_history_last_sync_ms';
-  static const syncInterval = Duration(minutes: 15);
+  static const syncInterval = LocalFirstSyncConfig.orderSyncInterval;
 
   Timer? _periodic;
   bool _syncInFlight = false;
@@ -94,12 +96,13 @@ class OrderHistorySyncService {
       await OrderHistoryCacheService.instance.saveOrders(userKey, merged);
       await prefs.setInt(_lastSyncKey, DateTime.now().millisecondsSinceEpoch);
 
-      if (kDebugMode) {
+      if (kDebugMode || LocalFirstSyncConfig.showSyncStatusAndLogging) {
         debugPrint(
           '[OrderHistorySync] saved ${merged.length} orders '
           '(remote=${remote.length} cached=${cached.length})',
         );
       }
+      localSyncLog('order sync ok count=${merged.length}');
 
       if (merged.isEmpty &&
           customerId == null &&
@@ -118,9 +121,74 @@ class OrderHistorySyncService {
 
   Future<void> writeThroughOrder(WooOrderSummary order) async {
     final userKey = await currentUserKey();
-    if (userKey == null || order.id <= 0) return;
+    if (userKey == null) return;
     await OrderHistoryCacheService.instance.upsertOrder(userKey, order);
     syncNow(force: true).ignore();
+  }
+
+  /// Optimistic local row before WooCommerce confirms the order.
+  Future<String> writeThroughPendingOrder({
+    required String number,
+    String total = '0',
+    String currency = 'AUD',
+    List<WooOrderLineItem> lineItems = const [],
+  }) async {
+    final userKey = await currentUserKey();
+    if (userKey == null) return '';
+    final localRef = 'pending_${DateTime.now().millisecondsSinceEpoch}';
+    final pending = WooOrderSummary(
+      id: -DateTime.now().millisecondsSinceEpoch,
+      number: number,
+      status: 'pending',
+      dateCreated: DateTime.now().toUtc(),
+      total: total,
+      currency: currency,
+      lineItems: lineItems,
+      syncState: OrderSyncState.pending,
+      localRef: localRef,
+    );
+    await OrderHistoryCacheService.instance.upsertOrder(userKey, pending);
+    localSyncLog('order pending localRef=$localRef number=$number');
+    return localRef;
+  }
+
+  Future<void> resolvePendingOrder({
+    required String localRef,
+    required WooOrderSummary order,
+  }) async {
+    final userKey = await currentUserKey();
+    if (userKey == null || localRef.isEmpty) return;
+    final existing = await OrderHistoryCacheService.instance.readOrders(userKey);
+    final rest = existing.where((o) => o.localRef != localRef).toList();
+    final confirmed = order.copyWith(
+      syncState: OrderSyncState.synced,
+      clearLocalRef: true,
+      clearSyncError: true,
+    );
+    await OrderHistoryCacheService.instance.saveOrders(
+      userKey,
+      [confirmed, ...rest],
+    );
+    localSyncLog('order synced id=${order.id} localRef=$localRef');
+    syncNow(force: true).ignore();
+  }
+
+  Future<void> failPendingOrder({
+    required String localRef,
+    required String error,
+  }) async {
+    final userKey = await currentUserKey();
+    if (userKey == null || localRef.isEmpty) return;
+    final existing = await OrderHistoryCacheService.instance.readOrders(userKey);
+    final updated = existing.map((o) {
+      if (o.localRef != localRef) return o;
+      return o.copyWith(
+        syncState: OrderSyncState.failed,
+        syncError: error,
+      );
+    }).toList();
+    await OrderHistoryCacheService.instance.saveOrders(userKey, updated);
+    localSyncLog('order failed localRef=$localRef error=$error');
   }
 
   Future<void> writeThroughCheckout({
@@ -137,6 +205,7 @@ class OrderHistorySyncService {
         dateCreated: DateTime.now().toUtc(),
         total: total,
         currency: 'AUD',
+        syncState: OrderSyncState.synced,
       ),
     );
   }
@@ -151,12 +220,30 @@ class OrderHistorySyncService {
     List<WooOrderSummary> cached,
     List<WooOrderSummary> remote,
   ) {
-    final seen = <int>{};
+    final seenIds = <int>{};
+    final seenRefs = <String>{};
     final merged = <WooOrderSummary>[];
-    for (final o in [...remote, ...cached]) {
-      if (o.id <= 0 || !seen.add(o.id)) continue;
+
+    void add(WooOrderSummary o) {
+      if (o.localRef != null && seenRefs.contains(o.localRef!)) return;
+      if (o.id > 0 && seenIds.contains(o.id)) return;
+      if (o.localRef != null) seenRefs.add(o.localRef!);
+      if (o.id > 0) seenIds.add(o.id);
       merged.add(o);
     }
+
+    for (final o in remote) {
+      add(o.copyWith(syncState: OrderSyncState.synced, clearSyncError: true));
+    }
+    for (final o in cached) {
+      if (o.isPendingSync || o.isFailedSync) {
+        add(o);
+        continue;
+      }
+      if (o.id > 0 && seenIds.contains(o.id)) continue;
+      add(o);
+    }
+
     merged.sort((a, b) => b.dateCreated.compareTo(a.dateCreated));
     return merged;
   }

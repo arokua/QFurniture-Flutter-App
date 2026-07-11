@@ -52,7 +52,7 @@ class OrderHistoryCacheService {
       return ordersRaw
           .whereType<Map<String, dynamic>>()
           .map(WooOrderSummary.fromJson)
-          .where((o) => o.id > 0)
+          .where((o) => o.id != 0 || (o.localRef?.isNotEmpty ?? false))
           .toList();
     } catch (e) {
       if (kDebugMode) debugPrint('[OrderHistoryCache] read error: $e');
@@ -73,12 +73,14 @@ class OrderHistoryCacheService {
   }
 
   Future<void> upsertOrder(String userKey, WooOrderSummary order) async {
-    if (order.id <= 0) return;
     final existing = await readOrders(userKey);
     final merged = <WooOrderSummary>[order];
-    final seen = <int>{order.id};
     for (final o in existing) {
-      if (seen.add(o.id)) merged.add(o);
+      final sameRef =
+          order.localRef != null && o.localRef == order.localRef;
+      final sameId = order.id > 0 && o.id == order.id;
+      if (sameRef || sameId) continue;
+      merged.add(o);
     }
     await saveOrders(userKey, merged);
   }

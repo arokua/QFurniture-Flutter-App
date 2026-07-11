@@ -1,4 +1,4 @@
-# q_furniture_app
+# q_toys_app
 
 A new Flutter project.
 

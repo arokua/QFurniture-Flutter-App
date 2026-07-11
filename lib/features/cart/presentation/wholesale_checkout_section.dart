@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/store_cart_api_service.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/cart_sync_service.dart';
+import '../../../services/order_history_sync_service.dart';
 import '../../../services/woo_commerce_rest_api.dart';
 import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
@@ -10,6 +12,7 @@ import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
 import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
+import '../../orders/domain/woo_order_summary.dart';
 import '../../orders/presentation/order_history_notifier.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
@@ -99,6 +102,27 @@ class _WholesaleCheckoutSectionState
 
     setState(() => _submitting = true);
     PostCheckoutNavigation.reset();
+
+    final totalDisplay =
+        widget.snapshot.totalsView.formattedTotal ??
+            formatStorePrice(_fallbackTotal(widget.snapshot));
+    final pendingLines = widget.snapshot.lines
+        .map(
+          (l) => WooOrderLineItem(
+            productId: l.productId,
+            quantity: l.quantity,
+            name: l.name,
+          ),
+        )
+        .toList();
+    final pendingRef = await OrderHistorySyncService.instance
+        .writeThroughPendingOrder(
+      number: '…',
+      total: totalDisplay.replaceAll(RegExp(r'[^\d.]'), ''),
+      lineItems: pendingLines,
+    );
+    ref.invalidate(orderHistoryProvider);
+
     try {
       final payment = _payment == WholesalePaymentMethod.bankDeposit
           ? (method: 'bacs', title: 'Bank Deposit')
@@ -116,6 +140,13 @@ class _WholesaleCheckoutSectionState
       if (!mounted) return;
 
       if (result.order == null) {
+        if (pendingRef.isNotEmpty) {
+          await OrderHistorySyncService.instance.failPendingOrder(
+            localRef: pendingRef,
+            error: result.error ?? 'Could not create order.',
+          );
+          ref.invalidate(orderHistoryProvider);
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(result.error ?? 'Could not create order.')),
         );
@@ -123,6 +154,7 @@ class _WholesaleCheckoutSectionState
       }
 
       await StoreCartApiService.instance.clearCart();
+      await CartSyncService.instance.clearCurrentCart();
       ref.read(cartProvider.notifier).clear();
       ref.invalidate(wooCartProvider);
       ref.invalidate(orderHistoryProvider);
@@ -135,11 +167,11 @@ class _WholesaleCheckoutSectionState
       Navigator.of(context).pop(); // close wholesale checkout sheet
 
       if (!rootContext.mounted) return;
-      await CheckoutConfirmation.showAndContinue(
-        context: rootContext,
+      await CheckoutConfirmation.complete(
         orderNumber: order.number,
         orderId: order.id,
         order: order,
+        pendingLocalRef: pendingRef.isNotEmpty ? pendingRef : null,
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
