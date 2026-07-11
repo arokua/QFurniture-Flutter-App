@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 
 import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
+import '../features/cart/data/store_cart_snapshot.dart';
+import '../features/cart/domain/role_cart_pricing.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 
 /// WooCommerce REST API (`/wp-json/wc/v3/...`) with Basic-auth + JWT fallbacks.
@@ -336,9 +338,46 @@ class WooCommerceRestApi {
     required String paymentMethod,
     required String paymentMethodTitle,
     String? billingEmail,
+    String? accountType,
+    List<Map<String, String>>? orderMeta,
+    List<RoleOrderLinePrice>? roleLinePrices,
   }) async {
     if (lineItems.isEmpty) {
       return (order: null, error: 'Cart is empty.');
+    }
+
+    final rolePriceById = <int, RoleOrderLinePrice>{
+      if (roleLinePrices != null)
+        for (final p in roleLinePrices) p.productId: p,
+    };
+
+    final linePayload = <Map<String, dynamic>>[];
+    var orderSubtotal = 0.0;
+    for (final e in lineItems) {
+      final row = <String, dynamic>{
+        'product_id': e.productId,
+        'quantity': e.quantity,
+      };
+      final priced = rolePriceById[e.productId];
+      if (priced != null) {
+        row['subtotal'] = priced.lineTotal;
+        row['total'] = priced.lineTotal;
+        orderSubtotal += double.tryParse(priced.lineTotal) ?? 0;
+      }
+      linePayload.add(row);
+    }
+
+    final orderSubtotalStr =
+        orderSubtotal > 0 ? orderSubtotal.toStringAsFixed(2) : null;
+
+    final meta = <Map<String, dynamic>>[
+      if (orderMeta != null)
+        ...orderMeta.map((e) => {'key': e['key'], 'value': e['value']}),
+    ];
+    if (!meta.any((m) => m['key'] == 'account_type') &&
+        accountType != null &&
+        accountType.isNotEmpty) {
+      meta.add({'key': 'account_type', 'value': accountType});
     }
 
     final payload = <String, dynamic>{
@@ -347,12 +386,12 @@ class WooCommerceRestApi {
       'payment_method_title': paymentMethodTitle,
       'set_paid': false,
       'status': 'on-hold',
-      'line_items': lineItems
-          .map((e) => {
-                'product_id': e.productId,
-                'quantity': e.quantity,
-              })
-          .toList(),
+      'line_items': linePayload,
+      if (orderSubtotalStr != null) ...{
+        'subtotal': orderSubtotalStr,
+        'total': orderSubtotalStr,
+      },
+      if (meta.isNotEmpty) 'meta_data': meta,
       if (billingEmail != null &&
           billingEmail.trim().isNotEmpty &&
           billingEmail.contains('@'))

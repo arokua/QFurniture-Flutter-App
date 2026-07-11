@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Qtoys Mobile App Extensions
  * Description: JWT-authenticated my-orders endpoint for the Qtoys partner app.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: Qtoys
  *
  * Deploy alongside qtoys-jwt-cookie-bridge (v1.3+). Provides:
@@ -157,4 +157,68 @@ function qtoys_rest_my_orders(WP_REST_Request $request) {
     }
 
     return new WP_REST_Response(['orders' => $out], 200);
+}
+
+/**
+ * When the app creates orders via wc/v3 REST, stamp account_type from the
+ * customer's WP role if the client did not send meta (avoids default retail).
+ */
+add_filter('woocommerce_rest_pre_insert_shop_order_object', 'qtoys_rest_stamp_order_account_type', 10, 3);
+
+function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
+    if (!$creating || !($order instanceof WC_Order)) {
+        return $order;
+    }
+
+    $existing = $order->get_meta('account_type', true);
+    if ($existing !== '' && $existing !== null) {
+        return $order;
+    }
+
+    $body = $request->get_json_params();
+    if (is_array($body) && !empty($body['meta_data']) && is_array($body['meta_data'])) {
+        foreach ($body['meta_data'] as $meta) {
+            if (!is_array($meta)) {
+                continue;
+            }
+            $key = isset($meta['key']) ? (string) $meta['key'] : '';
+            if ($key === 'account_type' && !empty($meta['value'])) {
+                $order->update_meta_data('account_type', (string) $meta['value']);
+                return $order;
+            }
+        }
+    }
+
+    $customer_id = (int) $order->get_customer_id();
+    if ($customer_id <= 0) {
+        return $order;
+    }
+
+    $user = get_userdata($customer_id);
+    if (!$user || empty($user->roles)) {
+        return $order;
+    }
+
+    $type = qtoys_map_wp_roles_to_account_type($user->roles);
+    if ($type !== '') {
+        $order->update_meta_data('account_type', $type);
+    }
+
+    return $order;
+}
+
+function qtoys_map_wp_roles_to_account_type(array $roles) {
+    foreach ($roles as $role) {
+        $r = strtolower((string) $role);
+        if ($r === 'wholesale' || $r === 'wholesale_customer' || strpos($r, 'wholesale') !== false) {
+            return 'wholesale';
+        }
+    }
+    foreach ($roles as $role) {
+        $r = strtolower((string) $role);
+        if (strpos($r, 'dropship') !== false || $r === 'retailer') {
+            return 'dropship';
+        }
+    }
+    return 'customer';
 }

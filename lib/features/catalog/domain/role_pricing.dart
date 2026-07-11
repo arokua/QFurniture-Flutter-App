@@ -1,5 +1,6 @@
-/// Retailer list/sale prices from WooCommerce are the reference (1:1).
-/// Other tiers are fractions of that reference for display.
+/// Retailer list/sale prices from WooCommerce are the reference (1:1 = retail).
+/// Tier multipliers: wholesale 0.5×, dropship 0.55× (1.1× wholesale), retail 1× (2× wholesale).
+/// Sale items use [salePrice] × multiplier, not [regularPrice].
 class RolePricing {
   RolePricing._();
 

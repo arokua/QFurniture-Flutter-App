@@ -52,6 +52,17 @@ String get storeCartUrl => '$kStoreBaseUrl$kStoreCartPath/';
 
 /// Build store checkout page URL.
 String get storeCheckoutUrl => '$kStoreBaseUrl$kStoreCheckoutPath/';
+
+/// Checkout with optional partner `type` (wholesale | dropship). Omit for retail.
+String storeCheckoutUrlForAccount({String? accountType}) {
+  final type = accountType?.trim();
+  if (type == null || type.isEmpty || type == 'customer') {
+    return storeCheckoutUrl;
+  }
+  return Uri.parse('$kStoreBaseUrl$kStoreCheckoutPath/').replace(
+    queryParameters: {'type': type},
+  ).toString();
+}
 String get jwtCookieBridgeUrl => '$kStoreBaseUrl$kJwtCookieBridgePath';
 
 /// When opening the **system browser**, use the same JWT→cookie bridge as the WebView POST,

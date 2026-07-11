@@ -127,25 +127,28 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
     _checkoutThankYouUrl = url;
 
     if (kDebugMode) {
-      debugPrint('[StoreWebView] checkout complete — redirecting ($url)');
+      debugPrint('[StoreWebView] checkout complete — redirecting home ($url)');
     }
-
-    // Brief pause so the thank-you page can finish rendering.
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    if (!mounted) return;
-
-    await _syncAfterWebView();
-    if (!mounted) return;
 
     final orderId = parseOrderIdFromThankYouUrl(url);
     final orderNumber =
         parseOrderNumberFromThankYouUrl(url) ?? (orderId != null ? '$orderId' : '—');
 
+    if (!mounted) return;
+
+    ref.read(cartProvider.notifier).clear();
+    ref.invalidate(wooCartProvider);
+
     context.pop();
-    await CheckoutConfirmation.complete(
-      orderNumber: orderNumber,
-      orderId: orderId,
+    PostCheckoutNavigation.go();
+
+    unawaited(
+      CheckoutConfirmation.complete(
+        orderNumber: orderNumber,
+        orderId: orderId,
+      ),
     );
+    unawaited(_syncAfterWebView());
   }
 
   @override

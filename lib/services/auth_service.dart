@@ -116,18 +116,38 @@ class AuthService extends ChangeNotifier {
   String? get jwtToken => _prefs?.getString(_tokenKey);
 
   /// WooCommerce `my-account/?action=login&type=` — wholesale | dropship | customer.
-  String get webAccountTypeForStoreLogin {
-    final r = _prefs?.getString(_roleKey) ?? 'customers';
-    switch (r) {
-      case 'wholesale':
-        return 'wholesale';
-      case 'dropshipping':
-      case 'retailer':
-        return 'dropship';
-      default:
-        return 'customer';
+  String get webAccountTypeForStoreLogin =>
+      storefrontAccountTypeFromRole(currentSession?.role ?? storedRoleRaw);
+
+  String get storedRoleRaw => _prefs?.getString(_roleKey) ?? 'customers';
+
+  /// Maps app session role → storefront `type` query / order `account_type` meta.
+  static String storefrontAccountTypeFromRole(String rawRole) {
+    final r = rawRole.toLowerCase().trim();
+    if (r.isEmpty || r == 'customers' || r == 'customer') return 'customer';
+    if (r == 'wholesale' ||
+        r == 'wholesale_customer' ||
+        r.contains('wholesale')) {
+      return 'wholesale';
     }
+    if (r == 'dropshipping' ||
+        r == 'retailer' ||
+        r.contains('dropship')) {
+      return 'dropship';
+    }
+    return 'customer';
   }
+
+  /// Order meta + checkout URL account channel for the signed-in user.
+  String get orderAccountTypeMeta => webAccountTypeForStoreLogin;
+
+  List<Map<String, String>> get orderRoleMetaData => [
+        {'key': 'account_type', 'value': orderAccountTypeMeta},
+        {
+          'key': 'customer_role',
+          'value': currentSession?.role ?? storedRoleRaw,
+        },
+      ];
 
   // ── Auth operations ──────────────────────────────────────────────────────
 

@@ -8,7 +8,9 @@ import '../../../config/store_cart_api_service.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
 import '../data/cart_session_refresh.dart';
+import '../data/role_adjusted_cart_provider.dart';
 import '../domain/cart_item.dart';
+import '../domain/role_cart_pricing.dart';
 import '../../catalog/domain/product.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
@@ -156,18 +158,42 @@ class _CartScreenBody extends ConsumerWidget {
         final snap = woo.snapshot;
         if (snap == null || snap.isEmpty) {
           if (woo.items.isNotEmpty) {
-            return _GuestCartScaffold(items: woo.items);
+            return _GuestCartScaffold(
+              items: woo.items,
+              pricingRole: AuthService.instance.currentSession?.role,
+            );
           }
           return _emptyScaffold(context, ref, isWholesale: isWholesaleCheckout);
         }
-        return _loadedScaffold(
-          context,
-          ref,
-          snap: snap,
-          isWholesale: isWholesaleCheckout,
-          syncStatus: woo.syncStatus,
-          fromCache: woo.fromCache,
-          syncError: woo.lastSyncError,
+        final adjustedAsync = ref.watch(roleAdjustedCartSnapshotProvider);
+        return adjustedAsync.when(
+          loading: () => _loadedScaffold(
+            context,
+            ref,
+            snap: snap,
+            isWholesale: isWholesaleCheckout,
+            syncStatus: woo.syncStatus,
+            fromCache: woo.fromCache,
+            syncError: woo.lastSyncError,
+          ),
+          error: (_, __) => _loadedScaffold(
+            context,
+            ref,
+            snap: snap,
+            isWholesale: isWholesaleCheckout,
+            syncStatus: woo.syncStatus,
+            fromCache: woo.fromCache,
+            syncError: woo.lastSyncError,
+          ),
+          data: (adjusted) => _loadedScaffold(
+            context,
+            ref,
+            snap: adjusted ?? snap,
+            isWholesale: isWholesaleCheckout,
+            syncStatus: woo.syncStatus,
+            fromCache: woo.fromCache,
+            syncError: woo.lastSyncError,
+          ),
         );
       },
     );
@@ -400,9 +426,13 @@ class _CartScreenBody extends ConsumerWidget {
 }
 
 class _GuestCartScaffold extends ConsumerWidget {
-  const _GuestCartScaffold({required this.items});
+  const _GuestCartScaffold({
+    required this.items,
+    this.pricingRole,
+  });
 
   final List<CartItem> items;
+  final String? pricingRole;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -426,12 +456,16 @@ class _GuestCartScaffold extends ConsumerWidget {
 
         final lines = snapshot.data!;
         final validLines = lines.where((line) => line.product != null).toList();
+        final role = pricingRole;
         final total = validLines.fold<double>(
           0,
           (sum, line) =>
               sum +
-              (line.product!.displayCurrentPriceForRole(null) *
-                  line.item.quantity),
+              (RoleCartPricing.lineTotal(
+                line.product!,
+                role,
+                line.item.quantity,
+              )),
         );
 
         return Scaffold(
@@ -475,7 +509,7 @@ class _GuestCartScaffold extends ConsumerWidget {
                         ),
                       );
                     }
-                    final unit = product.displayCurrentPriceForRole(null);
+                    final unit = RoleCartPricing.unitPrice(product, role);
                     final lineTotal = unit * item.quantity;
                     return _CartLineCard(
                       productId: item.productId,
@@ -885,9 +919,12 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
           remote.success && remoteItems is List && remoteItems.isNotEmpty;
       final skipAddQueue = serverHasCart && items.isNotEmpty;
 
+      final accountType = AuthService.instance.webAccountTypeForStoreLogin;
+      final checkoutUrl = storeCheckoutUrlForAccount(accountType: accountType);
+
       StoreWebViewScreen.push(
         context,
-        storeCheckoutUrl,
+        checkoutUrl,
         attemptWebLogin: AuthService.instance.currentSession != null,
         addToCartItems: skipAddQueue ? null : (items.isEmpty ? null : items),
       );

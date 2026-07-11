@@ -1,19 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../config/store_cart_api_service.dart';
 import '../../../services/auth_service.dart';
-import '../../../services/cart_sync_service.dart';
-import '../../../services/order_history_sync_service.dart';
-import '../../../services/woo_commerce_rest_api.dart';
+import '../../../services/wholesale_checkout_submit_service.dart';
 import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
-import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
-import '../../orders/domain/woo_order_summary.dart';
-import '../../orders/presentation/order_history_notifier.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
 
@@ -76,17 +72,13 @@ class _WholesaleCheckoutSectionState
 
     final session = AuthService.instance.currentSession;
     final token = session?.token;
-    final customerId = session?.customerId ??
-        await AuthService.instance.ensureCustomerIdForCurrentSession();
-    if (token == null || token.isEmpty || customerId == null) {
+    if (token == null || token.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Sign in again to place your order.')),
       );
       return;
     }
-
-    final billingEmail = await AuthService.instance.resolvedAccountEmail();
 
     final lines = widget.snapshot.lines
         .map((l) => (productId: l.productId, quantity: l.quantity))
@@ -103,79 +95,31 @@ class _WholesaleCheckoutSectionState
     setState(() => _submitting = true);
     PostCheckoutNavigation.reset();
 
-    final totalDisplay =
-        widget.snapshot.totalsView.formattedTotal ??
-            formatStorePrice(_fallbackTotal(widget.snapshot));
-    final pendingLines = widget.snapshot.lines
-        .map(
-          (l) => WooOrderLineItem(
-            productId: l.productId,
-            quantity: l.quantity,
-            name: l.name,
-          ),
-        )
-        .toList();
-    final pendingRef = await OrderHistorySyncService.instance
-        .writeThroughPendingOrder(
-      number: '…',
-      total: totalDisplay.replaceAll(RegExp(r'[^\d.]'), ''),
-      lineItems: pendingLines,
-    );
-    ref.invalidate(orderHistoryProvider);
+    final payment = _payment == WholesalePaymentMethod.bankDeposit
+        ? (method: 'bacs', title: 'Bank Deposit')
+        : (method: 'cod', title: 'Credit card (phone)');
 
-    try {
-      final payment = _payment == WholesalePaymentMethod.bankDeposit
-          ? (method: 'bacs', title: 'Bank Deposit')
-          : (method: 'cod', title: 'Credit card (phone)');
+    ref.read(cartProvider.notifier).clear();
+    ref.invalidate(wooCartProvider);
 
-      final result = await WooCommerceRestApi.instance.createWholesaleOrder(
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    PostCheckoutNavigation.go();
+
+    unawaited(
+      WholesaleCheckoutSubmitService.instance.submitInBackground(
         jwt: token,
-        customerId: customerId,
-        lineItems: lines,
+        customerId: session?.customerId,
+        snapshot: widget.snapshot,
+        lines: lines,
         paymentMethod: payment.method,
         paymentMethodTitle: payment.title,
-        billingEmail: billingEmail,
-      );
+        accountType: AuthService.instance.orderAccountTypeMeta,
+        orderMeta: AuthService.instance.orderRoleMetaData,
+      ),
+    );
 
-      if (!mounted) return;
-
-      if (result.order == null) {
-        if (pendingRef.isNotEmpty) {
-          await OrderHistorySyncService.instance.failPendingOrder(
-            localRef: pendingRef,
-            error: result.error ?? 'Could not create order.',
-          );
-          ref.invalidate(orderHistoryProvider);
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.error ?? 'Could not create order.')),
-        );
-        return;
-      }
-
-      await StoreCartApiService.instance.clearCart();
-      await CartSyncService.instance.clearCurrentCart();
-      ref.read(cartProvider.notifier).clear();
-      ref.invalidate(wooCartProvider);
-      ref.invalidate(orderHistoryProvider);
-
-      final order = result.order!;
-      if (!mounted) return;
-
-      final rootContext = Navigator.of(context, rootNavigator: true).context;
-      if (!context.mounted) return;
-      Navigator.of(context).pop(); // close wholesale checkout sheet
-
-      if (!rootContext.mounted) return;
-      await CheckoutConfirmation.complete(
-        orderNumber: order.number,
-        orderId: order.id,
-        order: order,
-        pendingLocalRef: pendingRef.isNotEmpty ? pendingRef : null,
-      );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
+    if (mounted) setState(() => _submitting = false);
   }
 
   @override
@@ -294,16 +238,7 @@ class _WholesaleCheckoutSectionState
           width: double.infinity,
           child: FilledButton(
             onPressed: (_submitting || !widget.moqMet) ? null : _submitOrder,
-            child: _submitting
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text('Proceed'),
+            child: const Text('Proceed'),
           ),
         ),
       ],
