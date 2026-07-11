@@ -22,7 +22,6 @@ import '../../../services/auth_service.dart';
 import '../../../services/cart_cache_service.dart';
 import '../../../services/cart_sync_service.dart';
 import '../../../widgets/local_sync_status_chip.dart';
-import '../../catalog/presentation/store_webview_screen.dart';
 import '../../orders/data/wholesale_moq_provider.dart';
 import 'wholesale_checkout_section.dart';
 
@@ -116,9 +115,10 @@ class _CartScreenBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isWholesaleCheckout = kWholesaleNativeCheckoutEnabled &&
-        AuthService.instance.isWholesaleCheckoutRole;
     final isSignedIn = AuthService.instance.isSignedIn;
+    final isNativeCheckout =
+        kWholesaleNativeCheckoutEnabled && isSignedIn;
+    final isWholesaleRole = AuthService.instance.isWholesaleCheckoutRole;
 
 
 
@@ -151,7 +151,7 @@ class _CartScreenBody extends ConsumerWidget {
       error: (e, st) => _emptyScaffold(
         context,
         ref,
-        isWholesale: isWholesaleCheckout,
+        isWholesale: isWholesaleRole,
         error: '$e',
       ),
       data: (woo) {
@@ -163,7 +163,7 @@ class _CartScreenBody extends ConsumerWidget {
               pricingRole: AuthService.instance.currentSession?.role,
             );
           }
-          return _emptyScaffold(context, ref, isWholesale: isWholesaleCheckout);
+          return _emptyScaffold(context, ref, isWholesale: isWholesaleRole);
         }
         final adjustedAsync = ref.watch(roleAdjustedCartSnapshotProvider);
         return adjustedAsync.when(
@@ -171,7 +171,8 @@ class _CartScreenBody extends ConsumerWidget {
             context,
             ref,
             snap: snap,
-            isWholesale: isWholesaleCheckout,
+            isWholesale: isWholesaleRole,
+            isNativeCheckout: isNativeCheckout,
             syncStatus: woo.syncStatus,
             fromCache: woo.fromCache,
             syncError: woo.lastSyncError,
@@ -180,7 +181,8 @@ class _CartScreenBody extends ConsumerWidget {
             context,
             ref,
             snap: snap,
-            isWholesale: isWholesaleCheckout,
+            isWholesale: isWholesaleRole,
+            isNativeCheckout: isNativeCheckout,
             syncStatus: woo.syncStatus,
             fromCache: woo.fromCache,
             syncError: woo.lastSyncError,
@@ -189,7 +191,8 @@ class _CartScreenBody extends ConsumerWidget {
             context,
             ref,
             snap: adjusted ?? snap,
-            isWholesale: isWholesaleCheckout,
+            isWholesale: isWholesaleRole,
+            isNativeCheckout: isNativeCheckout,
             syncStatus: woo.syncStatus,
             fromCache: woo.fromCache,
             syncError: woo.lastSyncError,
@@ -306,6 +309,7 @@ class _CartScreenBody extends ConsumerWidget {
     WidgetRef ref, {
     required StoreCartApiSnapshot snap,
     required bool isWholesale,
+    required bool isNativeCheckout,
     CartSyncStatus syncStatus = CartSyncStatus.idle,
     bool fromCache = false,
     String? syncError,
@@ -401,7 +405,11 @@ class _CartScreenBody extends ConsumerWidget {
               ),
             ),
           ),
-          _CartCheckoutBar(snapshot: snap, isWholesale: isWholesale),
+          _CartCheckoutBar(
+            snapshot: snap,
+            isWholesale: isWholesale,
+            isNativeCheckout: isNativeCheckout,
+          ),
         ],
       ),
     );
@@ -886,77 +894,32 @@ double _cartSnapshotTotal(StoreCartApiSnapshot snap) {
   return total;
 }
 
-/// Compact sticky footer — full wholesale checkout opens in a bottom sheet.
-class _CartCheckoutBar extends ConsumerStatefulWidget {
+/// Compact sticky footer — native checkout opens in a bottom sheet.
+class _CartCheckoutBar extends ConsumerWidget {
   const _CartCheckoutBar({
     required this.snapshot,
     required this.isWholesale,
+    required this.isNativeCheckout,
   });
 
   final StoreCartApiSnapshot snapshot;
   final bool isWholesale;
+  final bool isNativeCheckout;
 
   @override
-  ConsumerState<_CartCheckoutBar> createState() => _CartCheckoutBarState();
-}
-
-class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
-  bool _isSyncing = false;
-
-  Future<void> _handleStoreCheckout(BuildContext context) async {
-    setState(() => _isSyncing = true);
-    try {
-      AuthService.instance.warmWebSessionCode().ignore();
-      final items = widget.snapshot.lines
-          .map((l) => (productId: l.productId, quantity: l.quantity))
-          .toList();
-
-      await StoreCartApiService.instance
-          .bootstrapSessionFromJwt(AuthService.instance.jwtToken);
-      final remote = await StoreCartApiService.instance.fetchFullCart();
-      final remoteItems = remote.data?['items'];
-      final serverHasCart =
-          remote.success && remoteItems is List && remoteItems.isNotEmpty;
-      final skipAddQueue = serverHasCart && items.isNotEmpty;
-
-      final accountType = AuthService.instance.webAccountTypeForStoreLogin;
-      final checkoutUrl = storeCheckoutUrlForAccount(accountType: accountType);
-
-      StoreWebViewScreen.push(
-        context,
-        checkoutUrl,
-        attemptWebLogin: AuthService.instance.currentSession != null,
-        addToCartItems: skipAddQueue ? null : (items.isEmpty ? null : items),
-      );
-    } finally {
-      if (mounted) setState(() => _isSyncing = false);
-    }
-  }
-
-  void _openWholesaleSheet(BuildContext context, bool moqMet) {
-    if (!moqMet) return;
-    showWholesaleCheckoutSheet(
-      context: context,
-      snapshot: widget.snapshot,
-      moqMet: moqMet,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final tv = widget.snapshot.totalsView;
-    final clientTotal = _cartSnapshotTotal(widget.snapshot);
-    final isWholesaleCheckout = widget.isWholesale;
+    final tv = snapshot.totalsView;
+    final clientTotal = _cartSnapshotTotal(snapshot);
 
-    final moqGate = isWholesaleCheckout
+    final moqGate = isWholesale
         ? ref.watch(wholesaleMoqGateProvider).valueOrNull
         : null;
-    final requiredMoq = isWholesaleCheckout
+    final requiredMoq = isWholesale
         ? (moqGate?.requiredMoq ?? kWholesaleMinimumFirstOrderAud)
         : 0.0;
     final moqMet =
-        !isWholesaleCheckout || requiredMoq <= 0 || clientTotal >= requiredMoq;
+        !isWholesale || requiredMoq <= 0 || clientTotal >= requiredMoq;
 
     final amountRight =
         tv.formattedTotal ?? formatStorePrice(clientTotal);
@@ -972,7 +935,7 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (!isWholesaleCheckout) ...[
+              if (!isWholesale) ...[
                 if (tv.formattedSubtotal != null &&
                     tv.formattedTotal != null &&
                     tv.formattedSubtotal != tv.formattedTotal)
@@ -1009,7 +972,7 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
                           amountRight,
                           style: theme.textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
-                            color: isWholesaleCheckout
+                            color: isWholesale
                                 ? const Color(0xFFC4A035)
                                 : theme.colorScheme.primary,
                           ),
@@ -1018,47 +981,26 @@ class _CartCheckoutBarState extends ConsumerState<_CartCheckoutBar> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  if (isWholesaleCheckout)
+                  if (isNativeCheckout)
                     FilledButton(
-                      onPressed:
-                          moqMet ? () => _openWholesaleSheet(context, moqMet) : null,
+                      onPressed: moqMet
+                          ? () => showWholesaleCheckoutSheet(
+                                context: context,
+                                snapshot: snapshot,
+                                moqMet: moqMet,
+                              )
+                          : null,
                       child: const Text('Place order'),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed:
-                          _isSyncing ? null : () => _handleStoreCheckout(context),
-                      icon: _isSyncing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.shopping_cart_checkout, size: 20),
-                      label: Text(
-                        _isSyncing ? 'Syncing…' : 'Checkout',
-                      ),
                     ),
                 ],
               ),
-              if (isWholesaleCheckout) ...[
+              if (isNativeCheckout) ...[
                 const SizedBox(height: 8),
                 Text(
                   'Tap Payment & proceed for bank details, shipping note, and order submission.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                     height: 1.3,
-                  ),
-                ),
-              ] else ...[
-                const SizedBox(height: 6),
-                Text(
-                  'Checkout opens on the store website.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
                   ),
                 ),
               ],

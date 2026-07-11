@@ -12,7 +12,7 @@ class RolePricing {
         return 0.5;
       case 'dropshipping':
       case 'retailer':
-        return 0.55;
+        return 1;
       case 'administrator':
       case 'admin':
         return 0.75;
