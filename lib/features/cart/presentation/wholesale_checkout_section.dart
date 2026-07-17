@@ -3,13 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../navigation/checkout_feedback.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/cart_sync_service.dart';
 import '../../../services/wholesale_checkout_submit_service.dart';
 import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
 import '../data/store_cart_snapshot.dart';
 import '../data/woo_cart_provider.dart';
 import '../../../navigation/post_checkout_navigation.dart';
+import '../../orders/presentation/order_history_notifier.dart';
 
 enum WholesalePaymentMethod { bankDeposit, creditCardPhone }
 
@@ -69,6 +72,7 @@ class _WholesaleCheckoutSectionState
 
   Future<void> _submitOrder() async {
     if (_submitting || !widget.moqMet) return;
+    if (WholesaleCheckoutSubmitService.instance.isSubmitting) return;
 
     final session = AuthService.instance.currentSession;
     final token = session?.token;
@@ -99,12 +103,19 @@ class _WholesaleCheckoutSectionState
         ? (method: 'bacs', title: 'Bank Deposit')
         : (method: 'cod', title: 'Credit card (phone)');
 
+    // Empty local cart + disk immediately (before navigate / background POST).
     ref.read(cartProvider.notifier).clear();
+    await CartSyncService.instance.writeEmptySyncedCart();
     ref.invalidate(wooCartProvider);
+    ref.invalidate(orderHistoryProvider);
 
     if (!mounted) return;
     Navigator.of(context).pop();
     PostCheckoutNavigation.go();
+
+    showCheckoutFeedbackSnackBar(
+      'Order sent — we\'re processing it in the background.',
+    );
 
     unawaited(
       WholesaleCheckoutSubmitService.instance.submitInBackground(
@@ -118,8 +129,6 @@ class _WholesaleCheckoutSectionState
         orderMeta: AuthService.instance.orderRoleMetaData,
       ),
     );
-
-    if (mounted) setState(() => _submitting = false);
   }
 
   @override

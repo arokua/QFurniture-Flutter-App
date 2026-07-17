@@ -22,6 +22,10 @@ class CartSyncService {
   Timer? _periodic;
   bool _syncInFlight = false;
 
+  /// After optimistic checkout, ignore remote cart items briefly so a slow
+  /// Store API clear cannot resurrect the previous basket.
+  DateTime? _suppressRemoteHydrateUntil;
+
   Future<void> init() async {
     await CartCacheService.instance.init();
     _periodic?.cancel();
@@ -139,7 +143,21 @@ class CartSyncService {
       }
 
       final data = remote.data!;
-      final items = cartItemsFromStoreCartJson(data);
+      var items = cartItemsFromStoreCartJson(data);
+      if (_suppressRemoteHydrateUntil != null &&
+          DateTime.now().isBefore(_suppressRemoteHydrateUntil!) &&
+          items.isNotEmpty) {
+        localSyncLog(
+          'cart sync suppressed remote hydrate '
+          '(checkout clear in flight, remoteItems=${items.length})',
+        );
+        await writeEmptySyncedCart(extendSuppress: false);
+        await prefs.setInt(_lastSyncKey, DateTime.now().millisecondsSinceEpoch);
+        return CartCacheService.instance.read(key);
+      }
+      if (items.isEmpty) {
+        _suppressRemoteHydrateUntil = null;
+      }
       await writeThroughRemote(items: items, rawJson: data);
       await prefs.setInt(_lastSyncKey, DateTime.now().millisecondsSinceEpoch);
       localSyncLog('cart sync ok items=${items.length}');
@@ -180,5 +198,33 @@ class CartSyncService {
   Future<void> clearCurrentCart() async {
     final key = await currentUserKey();
     await CartCacheService.instance.clear(key);
+  }
+
+  /// Persist an empty cart as synced so background sync cannot resurrect
+  /// stale Store API items after an optimistic checkout clear.
+  Future<void> writeEmptySyncedCart({bool extendSuppress = true}) async {
+    if (extendSuppress) {
+      _suppressRemoteHydrateUntil =
+          DateTime.now().add(const Duration(seconds: 60));
+    }
+    final key = await currentUserKey();
+    await CartCacheService.instance.save(
+      key,
+      CartCacheRecord(
+        items: const [],
+        snapshotJson: const {
+          'items': <dynamic>[],
+          'items_count': 0,
+          'items_weight': 0,
+          'needs_payment': false,
+          'needs_shipping': false,
+          'totals': <String, dynamic>{},
+        },
+        syncStatus: CartSyncStatus.synced,
+        updatedAt: DateTime.now(),
+        lastSyncAt: DateTime.now(),
+        lastSyncError: null,
+      ),
+    );
   }
 }

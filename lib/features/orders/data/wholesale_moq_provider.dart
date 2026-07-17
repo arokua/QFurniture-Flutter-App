@@ -11,7 +11,10 @@ final wholesaleMoqGateProvider =
   final s = AuthService.instance.currentSession;
   final token = s?.token;
   final role = s?.role.toLowerCase() ?? '';
-  if (role != 'wholesale' && role != 'wholesale_customer') {
+  if (role != 'wholesale' &&
+      role != 'wholesale_customer' &&
+      role != 'wholesale_childcare' &&
+      !role.contains('childcare')) {
     return (requiredMoq: 0.0, hasCompletedOrder: false);
   }
   if (token == null || token.isEmpty) {

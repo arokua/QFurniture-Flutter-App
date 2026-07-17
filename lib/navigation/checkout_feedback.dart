@@ -6,7 +6,13 @@ import '../app_router.dart';
 void showCheckoutFeedbackSnackBar(String message) {
   final ctx = rootNavigatorKey.currentContext;
   if (ctx == null) return;
-  ScaffoldMessenger.of(ctx).showSnackBar(
-    SnackBar(content: Text(message)),
+  final messenger = ScaffoldMessenger.of(ctx);
+  messenger.clearSnackBars();
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text(message),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 3),
+    ),
   );
 }

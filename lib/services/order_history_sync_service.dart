@@ -216,6 +216,9 @@ class OrderHistorySyncService {
     await prefs.remove(_lastSyncKey);
   }
 
+  /// Remote is source of truth for server orders.
+  /// Cached rows that no longer exist remotely are dropped (admin deletes).
+  /// Only in-flight / failed local optimistic rows are kept.
   List<WooOrderSummary> _mergeOrders(
     List<WooOrderSummary> cached,
     List<WooOrderSummary> remote,
@@ -235,11 +238,10 @@ class OrderHistorySyncService {
     for (final o in remote) {
       add(o.copyWith(syncState: OrderSyncState.synced, clearSyncError: true));
     }
+
+    // Keep only optimistic local rows that are not yet confirmed on the server.
     for (final o in cached) {
-      if (o.isPendingSync || o.isFailedSync) {
-        add(o);
-        continue;
-      }
+      if (!o.isPendingSync && !o.isFailedSync) continue;
       if (o.id > 0 && seenIds.contains(o.id)) continue;
       add(o);
     }

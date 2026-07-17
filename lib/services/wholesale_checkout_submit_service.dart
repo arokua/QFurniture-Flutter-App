@@ -10,12 +10,19 @@ import 'order_history_sync_service.dart';
 import 'woo_commerce_rest_api.dart';
 import '../config/store_cart_api_service.dart';
 
-/// Posts wholesale orders after the UI has already returned home.
+/// Posts native checkout orders after the UI has already returned home.
 class WholesaleCheckoutSubmitService {
   WholesaleCheckoutSubmitService._();
 
   static final WholesaleCheckoutSubmitService instance =
       WholesaleCheckoutSubmitService._();
+
+  bool _submitInFlight = false;
+  String? _lastClientOrderKey;
+  DateTime? _lastSubmitAt;
+
+  /// True while a background POST is running (UI can avoid re-submit).
+  bool get isSubmitting => _submitInFlight;
 
   Future<void> submitInBackground({
     required String jwt,
@@ -26,9 +33,34 @@ class WholesaleCheckoutSubmitService {
     required String paymentMethodTitle,
     required String accountType,
     required List<Map<String, String>> orderMeta,
+    String? clientOrderKey,
   }) async {
+    final key = clientOrderKey ??
+        '${lines.map((e) => '${e.productId}x${e.quantity}').join('|')}_'
+            '${DateTime.now().millisecondsSinceEpoch ~/ 2000}';
+
+    // Deduplicate rapid double-taps / rebuild re-entry within 8s.
+    final now = DateTime.now();
+    if (_submitInFlight) return;
+    if (_lastClientOrderKey == key &&
+        _lastSubmitAt != null &&
+        now.difference(_lastSubmitAt!) < const Duration(seconds: 8)) {
+      return;
+    }
+
+    _submitInFlight = true;
+    _lastClientOrderKey = key;
+    _lastSubmitAt = now;
+
     String pendingRef = '';
     try {
+      // Clear server cart immediately so background cart sync cannot
+      // rehydrate items and enable a duplicate place-order.
+      await Future.wait([
+        StoreCartApiService.instance.clearCart(),
+        CartSyncService.instance.writeEmptySyncedCart(),
+      ]);
+
       var resolvedCustomerId = customerId;
       resolvedCustomerId ??=
           await AuthService.instance.ensureCustomerIdForCurrentSession();
@@ -60,6 +92,11 @@ class WholesaleCheckoutSubmitService {
       final billingEmail = await AuthService.instance.resolvedAccountEmail();
       final roleLinePrices = RoleCartPricing.fromSnapshotLines(snapshot.lines);
 
+      final metaWithClientKey = <Map<String, String>>[
+        ...orderMeta,
+        {'key': 'qtoys_client_order_key', 'value': key},
+      ];
+
       final result = await WooCommerceRestApi.instance.createWholesaleOrder(
         jwt: jwt,
         customerId: resolvedCustomerId,
@@ -68,7 +105,7 @@ class WholesaleCheckoutSubmitService {
         paymentMethodTitle: paymentMethodTitle,
         billingEmail: billingEmail,
         accountType: accountType,
-        orderMeta: orderMeta,
+        orderMeta: metaWithClientKey,
         roleLinePrices: roleLinePrices,
       );
 
@@ -94,8 +131,9 @@ class WholesaleCheckoutSubmitService {
         await OrderHistorySyncService.instance.writeThroughOrder(result.order!);
       }
 
+      // Ensure store + local cart stay empty after success.
       unawaited(StoreCartApiService.instance.clearCart());
-      unawaited(CartSyncService.instance.clearCurrentCart());
+      unawaited(CartSyncService.instance.writeEmptySyncedCart());
       OrderHistorySyncService.instance.syncNow(force: true).ignore();
     } catch (e, st) {
       if (pendingRef.isNotEmpty) {
@@ -112,6 +150,8 @@ class WholesaleCheckoutSubmitService {
         print('[WholesaleCheckoutSubmit] $e\n$st');
         return true;
       }());
+    } finally {
+      _submitInFlight = false;
     }
   }
 

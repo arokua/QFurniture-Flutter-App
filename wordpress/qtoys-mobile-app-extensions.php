@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Qtoys Mobile App Extensions
  * Description: JWT-authenticated my-orders endpoint for the Qtoys partner app.
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Qtoys
  *
  * Deploy alongside qtoys-jwt-cookie-bridge (v1.3+). Provides:
@@ -160,8 +160,8 @@ function qtoys_rest_my_orders(WP_REST_Request $request) {
 }
 
 /**
- * When the app creates orders via wc/v3 REST, stamp account_type from the
- * customer's WP role if the client did not send meta (avoids default retail).
+ * Stamp account_type + Wholesale Suite order-type meta on REST-created orders
+ * so admin Origin / Order type show Wholesale / Wholesale (dropship) / etc.
  */
 add_filter('woocommerce_rest_pre_insert_shop_order_object', 'qtoys_rest_stamp_order_account_type', 10, 3);
 
@@ -170,38 +170,69 @@ function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
         return $order;
     }
 
-    $existing = $order->get_meta('account_type', true);
-    if ($existing !== '' && $existing !== null) {
-        return $order;
-    }
-
     $body = $request->get_json_params();
+    $meta_from_body = [];
     if (is_array($body) && !empty($body['meta_data']) && is_array($body['meta_data'])) {
         foreach ($body['meta_data'] as $meta) {
             if (!is_array($meta)) {
                 continue;
             }
             $key = isset($meta['key']) ? (string) $meta['key'] : '';
-            if ($key === 'account_type' && !empty($meta['value'])) {
-                $order->update_meta_data('account_type', (string) $meta['value']);
-                return $order;
+            if ($key === '' || !isset($meta['value'])) {
+                continue;
             }
+            $meta_from_body[$key] = (string) $meta['value'];
         }
     }
 
+    $account_type = $order->get_meta('account_type', true);
+    if (($account_type === '' || $account_type === null) && !empty($meta_from_body['account_type'])) {
+        $account_type = $meta_from_body['account_type'];
+        $order->update_meta_data('account_type', $account_type);
+    }
+
     $customer_id = (int) $order->get_customer_id();
-    if ($customer_id <= 0) {
-        return $order;
+    $user = $customer_id > 0 ? get_userdata($customer_id) : false;
+    $roles = ($user && !empty($user->roles)) ? $user->roles : [];
+
+    if ($account_type === '' || $account_type === null) {
+        $account_type = qtoys_map_wp_roles_to_account_type($roles);
+        if ($account_type !== '') {
+            $order->update_meta_data('account_type', $account_type);
+        }
     }
 
-    $user = get_userdata($customer_id);
-    if (!$user || empty($user->roles)) {
-        return $order;
+    $type_label = '';
+    if (!empty($meta_from_body['_wwpp_wholesale_order_type'])) {
+        $type_label = $meta_from_body['_wwpp_wholesale_order_type'];
+    } elseif (!empty($meta_from_body['customer_role'])) {
+        $type_label = qtoys_order_type_label_from_role($meta_from_body['customer_role']);
+    } else {
+        $type_label = qtoys_order_type_label_from_roles($roles);
     }
 
-    $type = qtoys_map_wp_roles_to_account_type($user->roles);
-    if ($type !== '') {
-        $order->update_meta_data('account_type', $type);
+    $order_type = !empty($meta_from_body['_wwpp_order_type'])
+        ? $meta_from_body['_wwpp_order_type']
+        : (($account_type !== '' && $account_type !== 'customer') ? 'wholesale' : 'retail');
+
+    if ($order_type !== '') {
+        $order->update_meta_data('_wwpp_order_type', $order_type);
+    }
+    if ($type_label !== '') {
+        $order->update_meta_data('_wwpp_wholesale_order_type', $type_label);
+        $order->update_meta_data('wwpp_wholesale_order_type', $type_label);
+    }
+
+    if (method_exists($order, 'get_created_via')) {
+        $via = $order->get_created_via();
+        if ($via === '' || $via === 'rest-api') {
+            $from_body = (is_array($body) && !empty($body['created_via']))
+                ? (string) $body['created_via']
+                : 'qtoys-mobile-app';
+            if (method_exists($order, 'set_created_via')) {
+                $order->set_created_via($from_body);
+            }
+        }
     }
 
     return $order;
@@ -210,8 +241,8 @@ function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
 function qtoys_map_wp_roles_to_account_type(array $roles) {
     foreach ($roles as $role) {
         $r = strtolower((string) $role);
-        if ($r === 'wholesale' || $r === 'wholesale_customer' || strpos($r, 'wholesale') !== false) {
-            return 'wholesale';
+        if (strpos($r, 'childcare') !== false) {
+            return 'childcare';
         }
     }
     foreach ($roles as $role) {
@@ -220,5 +251,38 @@ function qtoys_map_wp_roles_to_account_type(array $roles) {
             return 'dropship';
         }
     }
+    foreach ($roles as $role) {
+        $r = strtolower((string) $role);
+        if ($r === 'wholesale' || $r === 'wholesale_customer' || strpos($r, 'wholesale') !== false) {
+            return 'wholesale';
+        }
+    }
     return 'customer';
+}
+
+function qtoys_order_type_label_from_roles(array $roles) {
+    foreach ($roles as $role) {
+        $label = qtoys_order_type_label_from_role((string) $role);
+        if ($label !== 'Retail') {
+            return $label;
+        }
+    }
+    return 'Retail';
+}
+
+function qtoys_order_type_label_from_role($role) {
+    $r = strtolower(trim((string) $role));
+    if (strpos($r, 'childcare') !== false) {
+        return 'Wholesale (childcare)';
+    }
+    if (strpos($r, 'dropship') !== false || $r === 'retailer' || $r === 'dropshipping') {
+        return 'Wholesale (dropship)';
+    }
+    if (strpos($r, 'wholesale') !== false || $r === 'wholesale_customer') {
+        return 'Wholesale';
+    }
+    if ($r === '' || $r === 'customer' || $r === 'customers') {
+        return 'Retail';
+    }
+    return 'Wholesale';
 }

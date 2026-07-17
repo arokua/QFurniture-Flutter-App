@@ -386,6 +386,7 @@ class WooCommerceRestApi {
       'payment_method_title': paymentMethodTitle,
       'set_paid': false,
       'status': 'on-hold',
+      'created_via': 'qtoys-mobile-app',
       'line_items': linePayload,
       if (orderSubtotalStr != null) ...{
         'subtotal': orderSubtotalStr,

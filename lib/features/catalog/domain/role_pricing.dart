@@ -9,10 +9,11 @@ class RolePricing {
     if (role == null || role.isEmpty) return 1.0;
     switch (role.toLowerCase()) {
       case 'wholesale':
+      case 'wholesale_childcare':
         return 0.5;
       case 'dropshipping':
       case 'retailer':
-        return 1;
+        return 0.55;
       case 'administrator':
       case 'admin':
         return 0.75;

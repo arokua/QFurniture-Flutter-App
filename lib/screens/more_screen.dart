@@ -13,6 +13,8 @@ String _accountRoleLabel(String role) {
     case 'wholesale':
     case 'wholesale_customer':
       return 'WHOLESALE';
+    case 'wholesale_childcare':
+      return 'WHOLESALE (CHILDCARE)';
     case 'dropshipping':
       return 'DROPSHIP / RETAIL';
     case 'retailer':

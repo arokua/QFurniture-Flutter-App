@@ -106,7 +106,10 @@ class AuthService extends ChangeNotifier {
   /// Wholesale B2B checkout (native invoice flow, not WebView checkout).
   bool get isWholesaleCheckoutRole {
     final r = currentSession?.role.toLowerCase() ?? '';
-    return r == 'wholesale' || r == 'wholesale_customer';
+    return r == 'wholesale' ||
+        r == 'wholesale_customer' ||
+        r == 'wholesale_childcare' ||
+        r.contains('childcare');
   }
   bool get hasWebLoginCredentials =>
       (_lastAuthEmail != null && _lastAuthEmail!.isNotEmpty) &&
@@ -125,29 +128,65 @@ class AuthService extends ChangeNotifier {
   static String storefrontAccountTypeFromRole(String rawRole) {
     final r = rawRole.toLowerCase().trim();
     if (r.isEmpty || r == 'customers' || r == 'customer') return 'customer';
-    if (r == 'wholesale' ||
-        r == 'wholesale_customer' ||
-        r.contains('wholesale')) {
-      return 'wholesale';
-    }
+    if (r.contains('childcare')) return 'childcare';
     if (r == 'dropshipping' ||
         r == 'retailer' ||
         r.contains('dropship')) {
       return 'dropship';
     }
+    if (r == 'wholesale' ||
+        r == 'wholesale_customer' ||
+        r.contains('wholesale')) {
+      return 'wholesale';
+    }
     return 'customer';
+  }
+
+  /// WooCommerce admin "Order type" label (Wholesale Suite column).
+  /// e.g. Wholesale / Wholesale (dropship) / Wholesale (childcare).
+  static String orderTypeDisplayFromRole(String rawRole) {
+    final r = rawRole.toLowerCase().trim();
+    if (r.contains('childcare')) return 'Wholesale (childcare)';
+    if (r.contains('dropship') || r == 'dropshipping' || r == 'retailer') {
+      return 'Wholesale (dropship)';
+    }
+    if (r.contains('wholesale') || r == 'wholesale_customer') {
+      return 'Wholesale';
+    }
+    if (r.isEmpty || r == 'customers' || r == 'customer') return 'Retail';
+    return 'Wholesale';
   }
 
   /// Order meta + checkout URL account channel for the signed-in user.
   String get orderAccountTypeMeta => webAccountTypeForStoreLogin;
 
-  List<Map<String, String>> get orderRoleMetaData => [
-        {'key': 'account_type', 'value': orderAccountTypeMeta},
-        {
-          'key': 'customer_role',
-          'value': currentSession?.role ?? storedRoleRaw,
-        },
-      ];
+  String get orderTypeDisplayLabel =>
+      orderTypeDisplayFromRole(currentSession?.role ?? storedRoleRaw);
+
+  /// Meta stamped on WC REST orders so admin Order Type / Origin resolve correctly.
+  List<Map<String, String>> get orderRoleMetaData {
+    final rawRole = currentSession?.role ?? storedRoleRaw;
+    final accountType = orderAccountTypeMeta;
+    final typeLabel = orderTypeDisplayFromRole(rawRole);
+    final isWholesaleChannel = accountType != 'customer';
+    return [
+      {'key': 'account_type', 'value': accountType},
+      {'key': 'customer_role', 'value': rawRole},
+      {'key': 'wwp_wholesale_role', 'value': rawRole},
+      {
+        'key': '_wwpp_order_type',
+        'value': isWholesaleChannel ? 'wholesale' : 'retail',
+      },
+      {
+        'key': '_wwpp_wholesale_order_type',
+        'value': typeLabel,
+      },
+      {
+        'key': 'qtoys_order_origin',
+        'value': 'qtoys-mobile-app',
+      },
+    ];
+  }
 
   // ── Auth operations ──────────────────────────────────────────────────────
 
@@ -1130,6 +1169,7 @@ class AuthService extends ChangeNotifier {
   static int _roleRank(String normalized) {
     switch (normalized) {
       case 'wholesale':
+      case 'wholesale_childcare':
         return 4;
       case 'dropshipping':
         return 3;
@@ -1150,8 +1190,10 @@ class AuthService extends ChangeNotifier {
   static String _normalizeStoredRole(String raw) {
     final r = raw.toLowerCase().trim();
     if (r.isEmpty) return 'customers';
-    if (r.contains('wholesale')) return 'wholesale';
+    // Keep childcare / dropship distinct before collapsing wholesale*.
+    if (r.contains('childcare')) return 'wholesale_childcare';
     if (r.contains('dropship')) return 'dropshipping';
+    if (r.contains('wholesale')) return 'wholesale';
     if (r == 'retailer' ||
         (r.contains('retail') && !r.contains('wholesale'))) {
       return 'retailer';

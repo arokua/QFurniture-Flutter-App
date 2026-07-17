@@ -159,7 +159,7 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
   void clear() {
     state = [];
     _saveCart();
-    CartSyncService.instance.clearCurrentCart().ignore();
+    CartSyncService.instance.writeEmptySyncedCart().ignore();
   }
 
   /// Re-fetch cart items from remote (WooCommerce Store API) and update local state.
