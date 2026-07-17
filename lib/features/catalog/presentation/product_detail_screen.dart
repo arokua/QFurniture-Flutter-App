@@ -143,79 +143,153 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
+  /// Richer green for the product-detail header (not washed-out primaryContainer).
+  static const _headerGreen = Color(0xFF00C300);
+
   Widget _buildProductDetail(BuildContext context, Product p) {
-        final decodedName = decodeHtmlEntities(p.name);
-        return ListenableBuilder(
-          listenable: AuthService.instance,
-          builder: (context, _) {
-            return Scaffold(
-              body: SafeArea(
-                top: false,
-                bottom: true,
-                left: false,
-                right: false,
-                child: CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: SizedBox(
-                        height: 420,
-                        child: _buildImageGallery(p),
+    final decodedName = decodeHtmlEntities(p.name);
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final wooAsync = ref.watch(wooCartProvider);
+        final cartCount = wooAsync.valueOrNull?.snapshot?.lines.length ??
+            ref.watch(cartProvider).length;
+
+        return Scaffold(
+          appBar: AppBar(
+            backgroundColor: _headerGreen,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Back',
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go(AppRoutes.home);
+                }
+              },
+            ),
+            title: Text(
+              decodedName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            actions: [
+              IconButton(
+                icon: Badge(
+                  isLabelVisible: cartCount > 0,
+                  label: Text('$cartCount'),
+                  child: const Icon(Icons.shopping_cart_outlined),
+                ),
+                tooltip: 'Cart',
+                onPressed: () {
+                  if (!AuthService.instance.isSignedIn) {
+                    context.push(AppRoutes.login);
+                    return;
+                  }
+                  context.push(AppRoutes.cart);
+                },
+              ),
+            ],
+          ),
+          body: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 420,
+                  child: _buildImageGallery(p),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isSmall = constraints.maxWidth < 600;
+                    final mainContent = _buildDetailMainContent(context, p);
+                    final sidebar = _buildDetailSidebar(context, p);
+                    if (!isSmall && constraints.maxWidth > 750) {
+                      return Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(flex: 3, child: mainContent),
+                            const SizedBox(width: 32),
+                            SizedBox(width: 300, child: sidebar),
+                          ],
+                        ),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.all(20.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          mainContent,
+                          const SizedBox(height: 32),
+                          sidebar,
+                        ],
                       ),
-                    ),
-                    SliverAppBar(
-                      pinned: true,
-                      title: Text(
-                        decodedName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(color: Colors.black54, blurRadius: 4),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+          bottomNavigationBar: Material(
+            elevation: 8,
+            color: Theme.of(context).colorScheme.surface,
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 64,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => context.go(AppRoutes.home),
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.home_outlined),
+                            SizedBox(height: 4),
+                            Text('Home', style: TextStyle(fontSize: 12)),
                           ],
                         ),
                       ),
-                      backgroundColor:
-                          Theme.of(context).colorScheme.primaryContainer,
                     ),
-                    SliverToBoxAdapter(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final isSmall = constraints.maxWidth < 600;
-                          final mainContent = _buildDetailMainContent(context, p);
-                          final sidebar = _buildDetailSidebar(context, p);
-                          if (!isSmall && constraints.maxWidth > 750) {
-                            return Padding(
-                              padding: const EdgeInsets.all(20.0),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(flex: 3, child: mainContent),
-                                  const SizedBox(width: 32),
-                                  SizedBox(width: 300, child: sidebar),
-                                ],
-                              ),
-                            );
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          if (!AuthService.instance.isSignedIn) {
+                            context.push(AppRoutes.login);
+                            return;
                           }
-                          return Padding(
-                            padding: const EdgeInsets.all(20.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                mainContent,
-                                const SizedBox(height: 32),
-                                sidebar
-                              ],
-                            ),
-                          );
+                          context.go(AppRoutes.homeMore);
                         },
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.account_circle_outlined),
+                            SizedBox(height: 4),
+                            Text('Profile', style: TextStyle(fontSize: 12)),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
+      },
+    );
   }
 
   Widget _buildDetailMainContent(BuildContext context, dynamic p) {
