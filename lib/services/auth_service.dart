@@ -142,19 +142,28 @@ class AuthService extends ChangeNotifier {
     return 'customer';
   }
 
-  /// WooCommerce admin "Order type" label (Wholesale Suite column).
-  /// e.g. Wholesale / Wholesale (dropship) / Wholesale (childcare).
-  static String orderTypeDisplayFromRole(String rawRole) {
+  /// Role slug for Wholesale Suite `_wwpp_wholesale_order_type`.
+  /// WWPP renders the Orders column as `Wholesale ({this value})`, so send
+  /// only the role — never a full "Wholesale (...)" string (that double-wraps).
+  static String orderTypeRoleSlug(String rawRole) {
     final r = rawRole.toLowerCase().trim();
-    if (r.contains('childcare')) return 'Wholesale (childcare)';
+    if (r.isEmpty || r == 'customers' || r == 'customer') return '';
+    if (r.contains('childcare')) return 'childcare';
     if (r.contains('dropship') || r == 'dropshipping' || r == 'retailer') {
-      return 'Wholesale (dropship)';
+      return 'dropship';
     }
-    if (r.contains('wholesale') || r == 'wholesale_customer') {
-      return 'Wholesale';
+    if (r == 'wholesale_customer' || r == 'wholesale' || r.contains('wholesale')) {
+      return 'wholesale';
     }
-    if (r.isEmpty || r == 'customers' || r == 'customer') return 'Retail';
-    return 'Wholesale';
+    // Any other non-retail trade role: use a clean slug.
+    return r.replaceAll(RegExp(r'[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_|_$'), '');
+  }
+
+  /// Human label for UI (not sent as WWPP meta).
+  static String orderTypeDisplayFromRole(String rawRole) {
+    final slug = orderTypeRoleSlug(rawRole);
+    if (slug.isEmpty) return 'Retail';
+    return 'Wholesale ($slug)';
   }
 
   /// Order meta + checkout URL account channel for the signed-in user.
@@ -167,8 +176,8 @@ class AuthService extends ChangeNotifier {
   List<Map<String, String>> get orderRoleMetaData {
     final rawRole = currentSession?.role ?? storedRoleRaw;
     final accountType = orderAccountTypeMeta;
-    final typeLabel = orderTypeDisplayFromRole(rawRole);
-    final isWholesaleChannel = accountType != 'customer';
+    final roleSlug = orderTypeRoleSlug(rawRole);
+    final isWholesaleChannel = roleSlug.isNotEmpty;
     return [
       {'key': 'account_type', 'value': accountType},
       {'key': 'customer_role', 'value': rawRole},
@@ -177,10 +186,11 @@ class AuthService extends ChangeNotifier {
         'key': '_wwpp_order_type',
         'value': isWholesaleChannel ? 'wholesale' : 'retail',
       },
-      {
-        'key': '_wwpp_wholesale_order_type',
-        'value': typeLabel,
-      },
+      if (isWholesaleChannel)
+        {
+          'key': '_wwpp_wholesale_order_type',
+          'value': roleSlug,
+        },
       {
         'key': 'qtoys_order_origin',
         'value': 'qtoys-mobile-app',

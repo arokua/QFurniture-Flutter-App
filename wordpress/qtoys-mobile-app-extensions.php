@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Qtoys Mobile App Extensions
  * Description: JWT-authenticated my-orders endpoint for the Qtoys partner app.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Qtoys
  *
  * Deploy alongside qtoys-jwt-cookie-bridge (v1.3+). Provides:
@@ -160,8 +160,11 @@ function qtoys_rest_my_orders(WP_REST_Request $request) {
 }
 
 /**
- * Stamp account_type + Wholesale Suite order-type meta on REST-created orders
- * so admin Origin / Order type show Wholesale / Wholesale (dropship) / etc.
+ * Stamp account_type + Wholesale Suite order-type meta on REST-created orders.
+ *
+ * WWPP Order Type column renders as: Wholesale ({_wwpp_wholesale_order_type})
+ * so the meta value must be the role slug only (e.g. wholesale, dropship),
+ * never a full "Wholesale (...)" string.
  */
 add_filter('woocommerce_rest_pre_insert_shop_order_object', 'qtoys_rest_stamp_order_account_type', 10, 3);
 
@@ -202,25 +205,28 @@ function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
         }
     }
 
-    $type_label = '';
+    // Prefer explicit slug from app; otherwise derive from customer_role / WP roles.
+    $role_slug = '';
     if (!empty($meta_from_body['_wwpp_wholesale_order_type'])) {
-        $type_label = $meta_from_body['_wwpp_wholesale_order_type'];
+        $role_slug = qtoys_normalize_wwpp_role_slug($meta_from_body['_wwpp_wholesale_order_type']);
     } elseif (!empty($meta_from_body['customer_role'])) {
-        $type_label = qtoys_order_type_label_from_role($meta_from_body['customer_role']);
+        $role_slug = qtoys_order_type_role_slug($meta_from_body['customer_role']);
     } else {
-        $type_label = qtoys_order_type_label_from_roles($roles);
+        $role_slug = qtoys_order_type_role_slug_from_roles($roles);
     }
 
+    $is_wholesale_channel = ($role_slug !== '');
     $order_type = !empty($meta_from_body['_wwpp_order_type'])
         ? $meta_from_body['_wwpp_order_type']
-        : (($account_type !== '' && $account_type !== 'customer') ? 'wholesale' : 'retail');
+        : ($is_wholesale_channel ? 'wholesale' : 'retail');
 
     if ($order_type !== '') {
         $order->update_meta_data('_wwpp_order_type', $order_type);
     }
-    if ($type_label !== '') {
-        $order->update_meta_data('_wwpp_wholesale_order_type', $type_label);
-        $order->update_meta_data('wwpp_wholesale_order_type', $type_label);
+    if ($is_wholesale_channel) {
+        // WWPP displays: Wholesale ({slug}) — store slug only.
+        $order->update_meta_data('_wwpp_wholesale_order_type', $role_slug);
+        $order->update_meta_data('wwpp_wholesale_order_type', $role_slug);
     }
 
     if (method_exists($order, 'get_created_via')) {
@@ -260,29 +266,55 @@ function qtoys_map_wp_roles_to_account_type(array $roles) {
     return 'customer';
 }
 
-function qtoys_order_type_label_from_roles(array $roles) {
-    foreach ($roles as $role) {
-        $label = qtoys_order_type_label_from_role((string) $role);
-        if ($label !== 'Retail') {
-            return $label;
-        }
+/**
+ * Strip accidental "Wholesale (...)" wrappers so WWPP does not double-wrap.
+ */
+function qtoys_normalize_wwpp_role_slug($value) {
+    $v = strtolower(trim((string) $value));
+    if ($v === '' || $v === 'retail') {
+        return '';
     }
-    return 'Retail';
+    // "Wholesale (dropship)" or "wholesale (wholesale)" → inner slug
+    if (preg_match('/^wholesale\s*\(\s*([^)]+)\s*\)$/i', $v, $m)) {
+        $v = strtolower(trim($m[1]));
+    }
+    // Bare "Wholesale" (old app bug) → wholesale
+    if ($v === 'wholesale') {
+        return 'wholesale';
+    }
+    return qtoys_order_type_role_slug($v);
 }
 
-function qtoys_order_type_label_from_role($role) {
+function qtoys_order_type_role_slug_from_roles(array $roles) {
+    foreach ($roles as $role) {
+        $slug = qtoys_order_type_role_slug((string) $role);
+        if ($slug !== '') {
+            return $slug;
+        }
+    }
+    return '';
+}
+
+/**
+ * Role slug stored in _wwpp_wholesale_order_type.
+ * Customer/retail → empty (not a wholesale order type).
+ * Everyone else → Wholesale ({slug}) in the admin column.
+ */
+function qtoys_order_type_role_slug($role) {
     $r = strtolower(trim((string) $role));
+    if ($r === '' || $r === 'customer' || $r === 'customers' || $r === 'retail') {
+        return '';
+    }
     if (strpos($r, 'childcare') !== false) {
-        return 'Wholesale (childcare)';
+        return 'childcare';
     }
     if (strpos($r, 'dropship') !== false || $r === 'retailer' || $r === 'dropshipping') {
-        return 'Wholesale (dropship)';
+        return 'dropship';
     }
-    if (strpos($r, 'wholesale') !== false || $r === 'wholesale_customer') {
-        return 'Wholesale';
+    if ($r === 'wholesale_customer' || $r === 'wholesale' || strpos($r, 'wholesale') !== false) {
+        return 'wholesale';
     }
-    if ($r === '' || $r === 'customer' || $r === 'customers') {
-        return 'Retail';
-    }
-    return 'Wholesale';
+    $slug = preg_replace('/[^a-z0-9]+/', '_', $r);
+    $slug = trim((string) $slug, '_');
+    return $slug !== '' ? $slug : 'wholesale';
 }
