@@ -1,3 +1,4 @@
+import '../data/cart_providers.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../navigation/checkout_feedback.dart';
 import '../../../services/auth_service.dart';
-import '../../../services/cart_sync_service.dart';
 import '../../../services/wholesale_checkout_submit_service.dart';
 import '../../../utils/money_format.dart';
 import '../data/cart_provider.dart';
@@ -105,7 +105,7 @@ class _WholesaleCheckoutSectionState
 
     // Empty local cart + disk immediately (before navigate / background POST).
     ref.read(cartProvider.notifier).clear();
-    await CartSyncService.instance.writeEmptySyncedCart();
+    await cartCoordinator.markEmptySynced();
     ref.invalidate(wooCartProvider);
     ref.invalidate(orderHistoryProvider);
 

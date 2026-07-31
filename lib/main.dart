@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'app_router.dart';
 import 'config/store_cart_api_service.dart';
+import 'features/cart/data/cart_providers.dart';
 import 'features/cart/data/cart_remote_sync_binding.dart';
 import 'services/product_sync_service.dart';
 import 'services/product_image_cache_service.dart';
@@ -33,6 +34,10 @@ void main() async {
 
   // Initialise auth (restores persisted JWT session if present).
   await AuthService.instance.init();
+
+  // Single-writer cart engine. Started after auth so it resolves the right
+  // user key, and after CartSyncService.init so the cache directory exists.
+  await initCartCoordinator();
 
   await ProductImageCacheService.instance.init();
 

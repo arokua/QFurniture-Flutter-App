@@ -1,3 +1,4 @@
+import '../../cart/data/cart_providers.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -6,7 +7,6 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../services/cart_sync_service.dart';
 import '../../../navigation/checkout_confirmation.dart';
 import '../../../navigation/post_checkout_navigation.dart';
 import '../../../services/order_history_sync_service.dart';
@@ -1179,7 +1179,7 @@ class _StoreWebViewScreenState extends ConsumerState<StoreWebViewScreen> {
       await ref.read(cartProvider.notifier).refreshFromRemote();
     }
     if (!mounted) return;
-    await CartSyncService.instance.syncNow(force: true);
+    await cartCoordinator.reconcile(force: true);
     ref.invalidate(wooCartProvider);
   }
 

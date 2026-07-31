@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
-import '../config/store_config.dart';
-import '../features/catalog/presentation/store_webview_screen.dart';
+import '../config/store_link_service.dart';
 import '../services/auth_service.dart';
 
 String _accountRoleLabel(String role) {
@@ -154,36 +153,42 @@ class MoreScreen extends StatelessWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push(AppRoutes.cart),
           ),
-          ListTile(
-            leading: const Icon(Icons.person_outline),
-            title: const Text('My account'),
-            subtitle: const Text('Store account on qtoys.com.au'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              final session = AuthService.instance.currentSession;
-              final url = session != null
-                  ? storeMyAccountUrl
-                  : storeMyAccountLoginUrl(
-                      accountType:
-                          AuthService.instance.webAccountTypeForStoreLogin,
-                    );
-              StoreWebViewScreen.push(
-                context,
-                url,
-                attemptWebLogin: session != null,
-                useMobileLayout: true,
-              );
-            },
-          ),
+          // "My account" is hidden for now. Kept here rather than deleted so it
+          // can be restored, and because it is the last WebView entry point on
+          // this screen (see localDocs/deferred-backlog.txt D1).
+          //
+          // To restore, re-add these imports:
+          //   import '../config/store_config.dart';
+          //   import '../features/catalog/presentation/store_webview_screen.dart';
+          // ListTile(
+          //   leading: const Icon(Icons.person_outline),
+          //   title: const Text('My account'),
+          //   subtitle: const Text('Store account on qtoys.com.au'),
+          //   trailing: const Icon(Icons.chevron_right),
+          //   onTap: () {
+          //     final session = AuthService.instance.currentSession;
+          //     final url = session != null
+          //         ? storeMyAccountUrl
+          //         : storeMyAccountLoginUrl(
+          //             accountType:
+          //                 AuthService.instance.webAccountTypeForStoreLogin,
+          //           );
+          //     StoreWebViewScreen.push(
+          //       context,
+          //       url,
+          //       attemptWebLogin: session != null,
+          //       useMobileLayout: true,
+          //     );
+          //   },
+          // ),
           ListTile(
             leading: const Icon(Icons.lock_reset_outlined),
             title: const Text('Reset password'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => StoreWebViewScreen.push(
-              context,
-              storeLostPasswordUrl,
-              attemptWebLogin: true,
-            ),
+            trailing: const Icon(Icons.open_in_new),
+            // Opens the storefront reset page in the system browser rather
+            // than a WebView with an injected session — a password reset must
+            // not run inside an already-authenticated web session.
+            onTap: () => StoreLinkService.openPasswordReset(),
           ),
           if (session != null)
             ListTile(

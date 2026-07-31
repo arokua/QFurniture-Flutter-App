@@ -277,6 +277,22 @@ class CartCoordinator {
         await _persist();
       });
 
+  /// Records the cart as empty and already in sync, without queueing a
+  /// mutation. Used after checkout has cleared the server cart directly, so a
+  /// background reconcile cannot resurrect the old basket.
+  Future<void> markEmptySynced() => _enqueue(() async {
+        _doc = _doc.copyWith(
+          lines: const [],
+          confirmed: const ConfirmedCart(),
+          pending: const [],
+          revision: _doc.revision + 1,
+          localSequence: _doc.localSequence + 1,
+          syncStatus: CartSyncStatus.synced,
+          clearLastSyncError: true,
+        );
+        await _persist(dispatch: false);
+      });
+
   /// Switches to another user's document (login, logout, account change).
   Future<void> onUserChanged() => _enqueue(() async {
         final key = await _userKey();

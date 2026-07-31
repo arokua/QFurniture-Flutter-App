@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../../../config/store_cart_api_service.dart';
+import '../../../config/store_link_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
+import 'widgets/password_field.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/order_history_sync_service.dart';
 import '../../../services/product_sync_service.dart';
@@ -27,6 +29,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  /// Opens WooCommerce's password-reset page in the system browser.
+  ///
+  /// Interim: a fully native reset needs `qtoys/v1/password-reset/*` endpoints
+  /// that do not exist server-side yet (see localDocs/deferred-backlog.txt B7).
+  /// This at least gives a locked-out user a working route — the previous link
+  /// pointed at `edit-account`, which just bounced them back to sign-in.
+  Future<void> _handleForgotPassword() async {
+    final ok = await StoreLinkService.openPasswordReset();
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          "We couldn't open the reset page. Please try again in a moment.",
+        ),
+      ),
+    );
   }
 
   Future<void> _handleLogin() async {
@@ -124,21 +144,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 16),
-              // Password field
-              TextField(
+              // Password field with show/hide toggle
+              PasswordField(
                 controller: _passwordController,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                obscureText: true,
+                enabled: !_isLoading,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _handleLogin(),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 Text(_error!, style: TextStyle(color: cs.error)),
               ],
-              const SizedBox(height: 24),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _isLoading ? null : _handleForgotPassword,
+                  child: const Text('Forgot password?'),
+                ),
+              ),
+              const SizedBox(height: 8),
               // Login button
               SizedBox(
                 width: double.infinity,

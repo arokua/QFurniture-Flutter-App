@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
-import '../../../config/store_cart_api_service.dart';
 import '../../cart/data/cart_provider.dart';
+import '../../cart/data/cart_providers.dart';
 import '../../cart/data/woo_cart_provider.dart';
 import '../../cart/presentation/widgets/stock_quantity_field.dart';
 import '../domain/product.dart';
@@ -1322,20 +1322,16 @@ class _QuickViewModalState extends ConsumerState<_QuickViewModal> {
                         ? () async {
                             setState(() => _isAdding = true);
                             try {
-                              ref
-                                  .read(cartProvider.notifier)
-                                  .add(p.id, quantity: _quantity);
-                              var remoteOk = true;
-                              remoteOk = await StoreCartApiService.instance
-                                  .addItem(p.id, quantity: _quantity);
+                              // Completes once persisted; the queue syncs to
+                              // the store in the background.
+                              await cartCoordinator.add(p.id,
+                                  quantity: _quantity);
                               if (!context.mounted) return;
-                              if (remoteOk) ref.invalidate(wooCartProvider);
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(remoteOk
-                                      ? 'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'
-                                      : 'Added locally. Cart will sync to the store at checkout.'),
+                                  content: Text(
+                                      'Added $_quantity x ${decodeHtmlEntities(p.name)} to cart'),
                                   duration: const Duration(seconds: 2),
                                   behavior: SnackBarBehavior.floating,
                                   shape: RoundedRectangleBorder(

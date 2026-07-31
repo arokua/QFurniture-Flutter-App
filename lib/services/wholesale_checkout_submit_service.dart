@@ -1,11 +1,12 @@
 import 'dart:async';
 
+import '../features/cart/data/cart_providers.dart';
+
 import '../features/cart/data/store_cart_snapshot.dart';
 import '../features/cart/domain/role_cart_pricing.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 import '../navigation/checkout_feedback.dart';
 import 'auth_service.dart';
-import 'cart_sync_service.dart';
 import 'order_history_sync_service.dart';
 import 'woo_commerce_rest_api.dart';
 import '../config/store_cart_api_service.dart';
@@ -58,7 +59,7 @@ class WholesaleCheckoutSubmitService {
       // rehydrate items and enable a duplicate place-order.
       await Future.wait([
         StoreCartApiService.instance.clearCart(),
-        CartSyncService.instance.writeEmptySyncedCart(),
+        cartCoordinator.markEmptySynced(),
       ]);
 
       var resolvedCustomerId = customerId;
@@ -133,7 +134,7 @@ class WholesaleCheckoutSubmitService {
 
       // Ensure store + local cart stay empty after success.
       unawaited(StoreCartApiService.instance.clearCart());
-      unawaited(CartSyncService.instance.writeEmptySyncedCart());
+      unawaited(cartCoordinator.markEmptySynced());
       OrderHistorySyncService.instance.syncNow(force: true).ignore();
     } catch (e, st) {
       if (pendingRef.isNotEmpty) {

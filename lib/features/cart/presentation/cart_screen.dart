@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../app_router.dart';
 import '../data/cart_provider.dart';
+import '../data/cart_providers.dart';
 import '../data/cart_session_refresh.dart';
 import '../data/role_adjusted_cart_provider.dart';
 import '../domain/cart_item.dart';
@@ -21,7 +22,6 @@ import '../../../config/local_first_sync_config.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/cart_cache_service.dart';
-import '../../../services/cart_sync_service.dart';
 import '../../../widgets/local_sync_status_chip.dart';
 import '../../orders/data/wholesale_moq_provider.dart';
 import 'wholesale_checkout_section.dart';
@@ -207,15 +207,10 @@ class _CartScreenBody extends ConsumerWidget {
   static Future<void> _onRefreshCart(WidgetRef ref) async {
     if (AuthService.instance.isSignedIn) {
       await rebootstrapCartSession();
-      await CartSyncService.instance.syncNow(force: true);
-      ref.invalidate(wooCartProvider);
-      try {
-        await ref.read(wooCartProvider.future);
-      } catch (_) {}
-      await ref.read(cartProvider.notifier).refreshFromRemote();
-      return;
     }
-    await ref.read(cartProvider.notifier).refreshFromRemote();
+    // One reconcile through the coordinator; it pushes the result down its
+    // stream, so no provider invalidation is needed.
+    await cartCoordinator.reconcile(force: true);
   }
 
   // â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -346,13 +341,9 @@ class _CartScreenBody extends ConsumerWidget {
               onPressed: () => _onRefreshCart(ref),
             ),
           TextButton(
-            onPressed: () async {
-              ref.read(cartProvider.notifier).clear();
-              if (!isWholesale) {
-                await StoreCartApiService.instance.clearCart();
-                ref.invalidate(wooCartProvider);
-              }
-            },
+            // The coordinator queues one clearAll and drains it; calling the
+            // Store API here too would be a second, unordered writer.
+            onPressed: () => cartCoordinator.clear(),
             child: const Text('Clear All'),
           ),
         ],
@@ -388,23 +379,16 @@ class _CartScreenBody extends ConsumerWidget {
                             unitPriceDisplay: line.formattedUnitPrice,
                             lineTotalDisplay: line.formattedLineTotal,
                             imageUrl: line.imageUrl,
-                            onRemove: () async {
-                              ref.read(cartProvider.notifier).remove(line.productId);
-                              await StoreCartApiService.instance
-                                  .removeItemByProductId(line.productId);
-                              if (context.mounted) {
-                                ref.invalidate(wooCartProvider);
-                              }
-                            },
-                            onQtyChanged: (q) async {
-                              if (q <= 0) return;
-                              ref.read(cartProvider.notifier).setQuantity(line.productId, q);
-                              await StoreCartApiService.instance
-                                  .updateItemByProductId(line.productId, q);
-                              if (context.mounted) {
-                                ref.invalidate(wooCartProvider);
-                              }
-                            },
+                            // Local-first: the coordinator persists the change,
+                            // pushes the new document down its stream and
+                            // dispatches in the background. No awaiting the
+                            // network, no provider invalidation.
+                            onRemove: () =>
+                                cartCoordinator.remove(line.productId),
+                            onQtyChanged: (q) => q <= 0
+                                ? cartCoordinator.remove(line.productId)
+                                : cartCoordinator.setQuantity(
+                                    line.productId, q),
                           ),
                         );
                       },
@@ -665,27 +649,14 @@ class _CartLineCard extends StatefulWidget {
 }
 
 class _CartLineCardState extends State<_CartLineCard> {
-  bool _isUpdating = false;
+  // Deliberately no in-flight gate. The previous `if (_isUpdating) return;`
+  // silently swallowed every tap during a two-request round trip, so "+ + +"
+  // landed as "+1". The coordinator coalesces a burst into one dispatch, so
+  // taps can be accepted unconditionally.
 
-  Future<void> _handleRemove() async {
-    if (_isUpdating) return;
-    setState(() => _isUpdating = true);
-    try {
-      await widget.onRemove();
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
+  Future<void> _handleRemove() => widget.onRemove();
 
-  Future<void> _handleQtyChange(int q) async {
-    if (_isUpdating) return;
-    setState(() => _isUpdating = true);
-    try {
-      await widget.onQtyChanged(q);
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
+  Future<void> _handleQtyChange(int q) => widget.onQtyChanged(q);
 
   @override
   Widget build(BuildContext context) {
@@ -793,27 +764,9 @@ class _CartLineCardState extends State<_CartLineCard> {
       ),
     );
 
-    return Stack(
-      children: [
-        card,
-        if (_isUpdating)
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(12), // Same as typical card border radius
-              ),
-              child: const Center(
-                child: SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+    // No blocking overlay: cart edits are local-first and must never freeze
+    // the line while the queue syncs in the background.
+    return card;
   }
 }
 

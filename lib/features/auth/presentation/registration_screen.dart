@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/store_cart_api_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
 import '../../../services/auth_service.dart';
+import 'widgets/password_field.dart';
 
 class RegistrationScreen extends ConsumerStatefulWidget {
   const RegistrationScreen({super.key});
@@ -187,16 +188,10 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                TextFormField(
+                PasswordField(
                   controller: _passwordController,
                   autofillHints: const [AutofillHints.newPassword],
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    prefixIcon: const Icon(Icons.lock_outline),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  obscureText: true,
+                  enabled: !_isLoading,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return 'Password is required';
                     if (v.trim().length < 6) return 'At least 6 characters';

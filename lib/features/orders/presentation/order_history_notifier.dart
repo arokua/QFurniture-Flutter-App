@@ -5,15 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app_router.dart';
-import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_config.dart';
 import '../../../providers.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/order_history_cache_service.dart';
 import '../../../services/order_history_sync_service.dart';
 import '../../../services/woo_commerce_rest_api.dart';
-import '../../cart/data/cart_provider.dart';
-import '../../cart/data/woo_cart_provider.dart';
+import '../../cart/data/cart_providers.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
 import '../domain/order_history_load_result.dart';
 import '../domain/woo_order_summary.dart';
@@ -186,12 +184,17 @@ Future<void> reorderFromOrder(
     if (ok != true) return;
   }
 
-  final cart = ref.read(cartProvider.notifier);
+  // Absolute quantities, merged onto whatever is already in the basket.
+  // The old path called an incrementing `add` per line, so reordering a SKU
+  // that was already in the cart silently doubled it.
+  final targets = <int, int>{
+    for (final line in cartCoordinator.current.lines)
+      line.productId: line.quantity,
+  };
   for (final t in toAdd) {
-    cart.add(t.productId, quantity: t.qty);
-    await StoreCartApiService.instance.addItem(t.productId, quantity: t.qty);
+    targets[t.productId] = t.qty;
   }
-  ref.invalidate(wooCartProvider);
+  await cartCoordinator.setExactLines(targets);
 
   if (context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(

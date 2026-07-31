@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/cart_cache_service.dart';
 import '../domain/cart_document.dart';
 import '../domain/cart_item.dart';
-import 'cart_coordinator.dart';
 import 'cart_providers.dart';
 import 'store_cart_snapshot.dart';
 

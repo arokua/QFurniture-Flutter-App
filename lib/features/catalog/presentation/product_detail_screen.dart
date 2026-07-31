@@ -7,7 +7,6 @@ import '../../../app_router.dart';
 import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
-import '../../../config/store_cart_api_service.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/product_sync_service.dart';
@@ -17,6 +16,7 @@ import 'widgets/low_stock_badge.dart';
 import 'widgets/product_display_image.dart';
 import 'store_webview_screen.dart';
 import '../../cart/data/cart_provider.dart';
+import '../../cart/data/cart_providers.dart';
 import '../../cart/data/woo_cart_provider.dart';
 import '../domain/product.dart';
 import '../domain/product_pricing_policy.dart';
@@ -412,20 +412,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ? () async {
                           setState(() => _isAdding = true);
                           try {
-                            ref
-                                .read(cartProvider.notifier)
-                                .add(p.id, quantity: 1);
-                            var remoteOk = true;
-                            remoteOk = await StoreCartApiService.instance
-                                .addItem(p.id, quantity: 1);
+                            // Completes once the change is on disk; the queue
+                            // syncs to the store in the background.
+                            await cartCoordinator.add(p.id, quantity: 1);
                             if (!context.mounted) return;
-                            if (remoteOk) ref.invalidate(wooCartProvider);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  remoteOk
-                                      ? 'Added ${decodeHtmlEntities(p.name)} to cart'
-                                      : 'Saved in your app cart. Cart will sync to the store when you checkout.',
+                                  'Added ${decodeHtmlEntities(p.name)} to cart',
                                 ),
                                 behavior: SnackBarBehavior.floating,
                               ),
