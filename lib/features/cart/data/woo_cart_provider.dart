@@ -3,11 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../services/cart_cache_service.dart';
-import '../../../services/cart_sync_service.dart';
-import '../../../services/auth_service.dart';
+import '../domain/cart_document.dart';
 import '../domain/cart_item.dart';
-import '../domain/cart_sync_outcome.dart';
-import 'cart_session_refresh.dart';
+import 'cart_coordinator.dart';
+import 'cart_providers.dart';
 import 'store_cart_snapshot.dart';
 
 /// Full cart state returned by the WooCommerce Store API.
@@ -33,107 +32,107 @@ class WooCartState {
   static const empty = WooCartState(items: []);
 }
 
-/// Cache-first cart: read JSON immediately, sync WooCommerce in background.
+/// Projection of the coordinator's document.
+///
+/// Previously this held its own cache-first fetch logic and a `_changed`
+/// comparison that looked only at ids and quantities — so a re-priced snapshot
+/// was silently discarded, and an empty cart surfaced as a red error. It is now
+/// a view: the coordinator owns fetching, reconciliation and persistence.
 class WooCartNotifier extends AsyncNotifier<WooCartState> {
+  StreamSubscription<CartDocument>? _sub;
+
   @override
   Future<WooCartState> build() async {
-    if (!AuthService.instance.isSignedIn) return WooCartState.empty;
+    final coordinator = cartCoordinator;
 
-    final cached = await CartSyncService.instance.readCached();
-    if (cached != null && cached.items.isNotEmpty) {
-      unawaited(_refreshInBackground());
-      return _fromCache(cached);
-    }
+    _sub?.cancel();
+    _sub = coordinator.stream.listen((doc) {
+      state = AsyncData(_project(doc));
+    });
+    ref.onDispose(() => _sub?.cancel());
 
-    final outcome = await CartSyncService.instance.syncNow(force: true);
-    if (outcome is CartSyncSucceeded) {
-      // Includes the empty-cart case: an empty cart is a real answer, and the
-      // caller must render the empty state rather than an error.
-      return _fromCache(outcome.record, fromCache: false);
-    }
-
-    try {
-      return await _fetchNetwork();
-    } catch (e) {
-      if (cached != null) return _fromCache(cached);
-      rethrow;
-    }
+    await coordinator.ensureHydrated();
+    return _project(coordinator.current);
   }
 
-  WooCartState _fromCache(CartCacheRecord record, {bool fromCache = true}) {
-    final snapshot = CartSyncService.instance.snapshotFromRecord(record);
+  WooCartState _project(CartDocument doc) {
+    final snapshotJson = doc.confirmed?.snapshotJson;
+    StoreCartApiSnapshot? snapshot;
+    if (snapshotJson != null) {
+      try {
+        snapshot = StoreCartApiSnapshot.fromCartJson(snapshotJson);
+      } catch (_) {
+        snapshot = null;
+      }
+    }
+
+    // Render confirmed prices, but with the user's pending intent overlaid so
+    // the line the user just changed shows the quantity they chose.
+    if (snapshot != null && doc.lines.isNotEmpty) {
+      snapshot = _overlayIntent(snapshot, doc);
+    }
+
     return WooCartState(
-      items: record.items,
+      items: doc.itemsView,
       snapshot: snapshot,
-      rawJson: record.snapshotJson,
-      syncStatus: record.syncStatus,
-      fromCache: fromCache,
-      lastSyncError: record.lastSyncError,
+      rawJson: snapshotJson,
+      syncStatus: doc.syncStatus,
+      fromCache: doc.confirmed?.fetchedAt == null,
+      lastSyncError: doc.lastSyncError,
     );
   }
 
-  Future<void> _refreshInBackground() async {
-    final outcome = await CartSyncService.instance.syncNow(force: true);
-    if (outcome is! CartSyncSucceeded) return;
-    final next = _fromCache(outcome.record, fromCache: false);
-    final current = state.valueOrNull;
-    if (current == null || _changed(current, next)) {
-      state = AsyncData(next);
-    }
-  }
+  /// Applies local quantities on top of server-priced lines, and drops lines
+  /// the user has removed locally but the server has not confirmed yet.
+  StoreCartApiSnapshot _overlayIntent(
+    StoreCartApiSnapshot snapshot,
+    CartDocument doc,
+  ) {
+    final intent = <int, int>{
+      for (final l in doc.lines) l.productId: l.quantity,
+    };
 
-  bool _changed(WooCartState a, WooCartState b) {
-    if (a.items.length != b.items.length) return true;
-    if (a.syncStatus != b.syncStatus) return true;
-    for (var i = 0; i < a.items.length; i++) {
-      if (a.items[i].productId != b.items[i].productId ||
-          a.items[i].quantity != b.items[i].quantity) {
-        return true;
+    final lines = <StoreCartLineItem>[];
+    for (final line in snapshot.lines) {
+      final wanted = intent.remove(line.productId);
+      if (wanted == null) {
+        // Removed locally; hide it immediately rather than waiting on the queue.
+        if (doc.hasPendingFor(line.productId)) continue;
+        lines.add(line);
+        continue;
       }
+      if (wanted == line.quantity) {
+        lines.add(line);
+        continue;
+      }
+      final unit = line.priceMinor;
+      lines.add(StoreCartLineItem(
+        productId: line.productId,
+        quantity: wanted,
+        name: line.name,
+        sku: line.sku,
+        cartItemKey: line.cartItemKey,
+        priceMinor: unit,
+        lineTotalMinor: unit != null ? unit * wanted : line.lineTotalMinor,
+        currencySymbol: line.currencySymbol,
+        minorUnit: line.minorUnit,
+        imageUrl: line.imageUrl,
+      ));
     }
-    // Quantities can be identical while prices or totals have moved (role
-    // re-pricing, a store-side price change). Comparing only ids/quantities
-    // silently dropped those updates, so compare the rendered totals too.
-    return _totalsSignature(a) != _totalsSignature(b);
-  }
 
-  String _totalsSignature(WooCartState s) {
-    final tv = s.snapshot?.totalsView;
-    if (tv == null) return '-';
-    return '${tv.totalPriceMinor}/${tv.totalItemsMinor}/'
-        '${tv.totalTaxMinor}/${tv.totalShippingMinor}';
-  }
-
-  Future<WooCartState> _fetchNetwork() async {
-    await ensureCartJwtFresh();
-
-    var state = await _fetchWithCurrentSession();
-    if (state != null) return state;
-
-    await rebootstrapCartSession();
-    state = await _fetchWithCurrentSession();
-    if (state != null) return state;
-
-    throw Exception('Cart API unavailable — pull to refresh');
-  }
-
-  Future<WooCartState?> _fetchWithCurrentSession() async {
-    final outcome = await CartSyncService.instance.syncNow(force: true);
-    // Only a genuine failure justifies falling through to the retry ladder.
-    // Success (empty or not) and skips must not be treated as unavailability.
-    if (outcome is CartSyncSucceeded) {
-      return _fromCache(outcome.record, fromCache: false);
+    if (lines.length == snapshot.lines.length && intent.isEmpty) {
+      return snapshot;
     }
-    final record = outcome.record;
-    if (outcome is CartSyncSkipped && record != null) {
-      return _fromCache(record);
-    }
-    return null;
+    return StoreCartApiSnapshot(
+      totalsView: snapshot.totalsView,
+      lines: lines,
+      errors: snapshot.errors,
+    );
   }
 
+  /// Pull-to-refresh.
   Future<void> refresh() async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(build);
+    await cartCoordinator.reconcile(force: true);
   }
 }
 

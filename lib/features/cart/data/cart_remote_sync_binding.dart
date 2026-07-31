@@ -5,9 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/local_first_sync_config.dart';
 import '../../../services/auth_service.dart';
-import '../../../services/cart_sync_service.dart';
 import '../../../services/order_history_sync_service.dart';
-import 'woo_cart_provider.dart';
+import 'cart_coordinator.dart';
+import 'cart_providers.dart';
 
 /// Refreshes the WooCommerce cart when the app returns to the foreground and
 /// on a periodic interval so web-only cart edits propagate without opening Cart.
@@ -47,16 +47,18 @@ class _CartRemoteSyncBindingState extends ConsumerState<CartRemoteSyncBinding>
         return;
       }
       if (!AuthService.instance.isSignedIn) return;
-      CartSyncService.instance.syncNow().ignore();
+      cartCoordinator.reconcile(reason: ReconcileReason.manual).ignore();
       OrderHistorySyncService.instance.syncNow().ignore();
     });
   }
 
   void _invalidateCartIfSignedIn() {
     if (!AuthService.instance.isSignedIn) return;
-    CartSyncService.instance.syncNow(force: true).then((_) {
-      if (mounted) ref.invalidate(wooCartProvider);
-    }).ignore();
+    // The coordinator pushes the new document down its stream, so there is
+    // nothing to invalidate — wooCartProvider is a view over it.
+    cartCoordinator
+        .reconcile(force: true, reason: ReconcileReason.appResume)
+        .ignore();
     OrderHistorySyncService.instance.syncNow().ignore();
   }
 
