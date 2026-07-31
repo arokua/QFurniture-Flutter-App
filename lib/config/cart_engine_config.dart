@@ -1,3 +1,5 @@
+import 'local_first_sync_config.dart';
+
 /// Tunables for the single-writer cart engine.
 class CartEngineConfig {
   CartEngineConfig._();
@@ -5,6 +7,10 @@ class CartEngineConfig {
   /// How long to wait after the last gesture on a line before dispatching it.
   /// Rapid stepper taps inside this window collapse into one network call.
   static const Duration coalesceWindow = Duration(milliseconds: 350);
+
+  /// Background reconcile interval. Shares the single source of truth with the
+  /// rest of the local-first stack so the heartbeat cannot drift.
+  static const Duration heartbeat = LocalFirstSyncConfig.cartSyncInterval;
 
   /// Backoff for transient failures. The last entry repeats.
   static const List<Duration> retryBackoff = [

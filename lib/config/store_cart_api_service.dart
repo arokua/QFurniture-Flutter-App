@@ -483,6 +483,87 @@ class StoreCartApiService {
     return tryPost();
   }
 
+  /// Drives one product to an **absolute** [targetQuantity].
+  ///
+  /// This is the only cart mutation the coordinator dispatches, because it is
+  /// safe to replay. `POST /cart/add-item` *increments* server-side, so a
+  /// request that succeeded but timed out client-side would double the line on
+  /// retry. Resolving to `update-item` (idempotent) whenever a line key is
+  /// known, and verifying after a blind add, removes that whole failure class.
+  ///
+  /// [knownKey] is the Store API `items[].key` from the last confirmed cart.
+  /// When absent, the key is resolved from the server before deciding.
+  Future<bool> updateOrAddByProductId(
+    int productId, {
+    required int targetQuantity,
+    String? knownKey,
+  }) async {
+    if (!hasSession) {
+      // No session yet: nothing to update, so an add is the only option and
+      // cannot double anything.
+      if (targetQuantity <= 0) return true;
+      return addItemOnce(productId, quantity: targetQuantity);
+    }
+
+    var key = knownKey;
+    if (key == null || key.isEmpty) {
+      final items = await getItems();
+      key = items.where((e) => e.id == productId).firstOrNull?.key;
+    }
+
+    if (targetQuantity <= 0) {
+      // Already absent is the desired end state, so report success.
+      if (key == null || key.isEmpty) return true;
+      return removeItem(key);
+    }
+
+    if (key != null && key.isNotEmpty) {
+      return updateItem(key, targetQuantity);
+    }
+
+    // Not in the cart yet. Add once, then verify rather than blind-retrying:
+    // an ambiguous timeout may already have applied server-side.
+    final added = await addItemOnce(productId, quantity: targetQuantity);
+    final items = await getItems();
+    final entry = items.where((e) => e.id == productId).firstOrNull;
+    if (entry == null) return added;
+    if (entry.quantity == targetQuantity) return true;
+    // The add landed with the wrong quantity (e.g. a retry stacked on top).
+    // Converge with an idempotent update instead of adding again.
+    return updateItem(entry.key, targetQuantity);
+  }
+
+  /// Single `add-item` attempt with the endpoint fallback but **no** retry.
+  ///
+  /// [addItem] retries the whole pair after clearing the nonce, which can turn
+  /// one logical add into four POSTs against an incrementing endpoint.
+  Future<bool> addItemOnce(int productId, {int quantity = 1}) async {
+    await _ensureStoreApiSessionPrimed();
+    final body = jsonEncode({'id': productId, 'quantity': quantity});
+    try {
+      final res = await http
+          .post(_cartAddItem, headers: _postHeaders, body: body)
+          .timeout(const Duration(seconds: 15));
+      await _absorbResponse(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) return true;
+      _logCartFailure('POST add-item', res);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[StoreCart] POST add-item error: $e');
+    }
+    try {
+      final res = await http
+          .post(_cartItems, headers: _postHeaders, body: body)
+          .timeout(const Duration(seconds: 15));
+      await _absorbResponse(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) return true;
+      _logCartFailure('POST cart/items', res);
+      return false;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[StoreCart] POST cart/items error: $e');
+      return false;
+    }
+  }
+
   // Note: syncCartToOnline (batch endpoint) has been removed.
   // Cart items are now synced to WooCommerce via the WebView ?add-to-cart= URL
   // queue in StoreWebViewScreen, which is more reliable and avoids

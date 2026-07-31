@@ -7,6 +7,7 @@ class StoreCartLineItem {
     required this.quantity,
     required this.name,
     this.sku,
+    this.cartItemKey,
     this.priceMinor,
     this.lineTotalMinor,
     this.currencySymbol,
@@ -17,6 +18,10 @@ class StoreCartLineItem {
   final int productId;
   final int quantity;
   final String name;
+
+  /// Store API line key (`items[].key`), used to address `update-item` and
+  /// `remove-item` directly instead of re-reading `GET /cart/items` first.
+  final String? cartItemKey;
 
   /// WooCommerce product SKU.
   final String? sku;
@@ -168,11 +173,14 @@ class StoreCartApiSnapshot {
         }
       }
 
+      final lineKey = e['key']?.toString().trim();
+
       lines.add(StoreCartLineItem(
         productId: pid,
         quantity: q,
         name: name.isNotEmpty ? name : 'Product #$pid',
         sku: (sku != null && sku.isNotEmpty) ? sku : null,
+        cartItemKey: (lineKey != null && lineKey.isNotEmpty) ? lineKey : null,
         priceMinor: priceMinor,
         lineTotalMinor: lineTotalMinor,
         currencySymbol: sym,

@@ -57,6 +57,7 @@ class RoleCartPricing {
           quantity: line.quantity,
           name: line.name.isNotEmpty ? line.name : product.name,
           sku: line.sku ?? product.sku,
+          cartItemKey: line.cartItemKey,
           priceMinor: unitMinor,
           lineTotalMinor: lineMinor,
           currencySymbol: line.currencySymbol ?? tv.currencySymbol,
