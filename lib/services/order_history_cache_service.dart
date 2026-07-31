@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../features/orders/domain/woo_order_summary.dart';
 import 'app_storage_permission.dart';
+import 'atomic_json_file.dart';
 
 /// Persists order history per signed-in user as JSON in app documents.
 class OrderHistoryCacheService {
@@ -24,6 +25,7 @@ class OrderHistoryCacheService {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
+    await AtomicJsonFile.sweepTempFiles(dir);
     _ready = true;
   }
 
@@ -69,7 +71,7 @@ class OrderHistoryCacheService {
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
       'orders': sorted.map((o) => o.toJson()).toList(),
     });
-    await _atomicWrite(await _fileForUser(userKey), payload);
+    await AtomicJsonFile.write(await _fileForUser(userKey), payload);
   }
 
   Future<void> upsertOrder(String userKey, WooOrderSummary order) async {
@@ -107,12 +109,5 @@ class OrderHistoryCacheService {
     } catch (e) {
       if (kDebugMode) debugPrint('[OrderHistoryCache] clearAll error: $e');
     }
-  }
-
-  Future<void> _atomicWrite(File file, String contents) async {
-    final tmp = File('${file.path}.tmp');
-    await tmp.writeAsString(contents, flush: true);
-    if (await file.exists()) await file.delete();
-    await tmp.rename(file.path);
   }
 }

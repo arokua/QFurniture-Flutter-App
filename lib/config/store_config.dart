@@ -124,8 +124,12 @@ String storeMyAccountLoginUrl({String? accountType}) {
 }
 
 /// Lost password on storefront (not wp-login.php).
+///
+/// Must be `lost-password`, which serves WooCommerce's `ResetPassword` form.
+/// This previously pointed at `edit-account`, which requires an existing login
+/// and therefore just bounced a locked-out user to the sign-in page.
 String get storeLostPasswordUrl =>
-    '$kStoreBaseUrl$kStoreMyAccountPath/edit-account/';
+    '$kStoreBaseUrl$kStoreMyAccountPath/lost-password/';
 
 /// Single order details in WooCommerce my account.
 String storeOrderViewUrl(int orderId) =>

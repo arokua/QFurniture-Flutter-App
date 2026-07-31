@@ -17,6 +17,7 @@ import '../data/woo_cart_provider.dart';
 import '../../../providers.dart';
 import '../../../utils/money_format.dart';
 
+import '../../../config/local_first_sync_config.dart';
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/cart_cache_service.dart';
@@ -229,7 +230,9 @@ class _CartScreenBody extends ConsumerWidget {
         title: const Text('Cart'),
         elevation: 0,
         actions: [
-          if (!isWholesale)
+          // Diagnostics only: this sheet renders response headers and
+          // session-presence flags, which must never reach a production user.
+          if (!isWholesale && LocalFirstSyncConfig.diagnosticsEnabled)
             IconButton(
               icon: const Icon(Icons.info_outline),
               tooltip: 'Debug',
@@ -256,8 +259,16 @@ class _CartScreenBody extends ConsumerWidget {
             const SizedBox(height: 8),
             Center(
               child: Text(
-                'Error: $error',
-                style: const TextStyle(fontSize: 12, color: Colors.red),
+                LocalFirstSyncConfig.diagnosticsEnabled
+                    ? 'Error: $error'
+                    : "We couldn't refresh your cart just now. "
+                        'Pull down to try again.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: LocalFirstSyncConfig.diagnosticsEnabled
+                      ? Colors.red
+                      : Colors.grey[600],
+                ),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -266,10 +277,13 @@ class _CartScreenBody extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                'The store API returned an empty cart for this app session. '
-                'Pull down to refresh, or add items here in the app. '
-                'Opening the cart URL in a browser tab is a different session '
-                '(you may see null shipping fields or empty items there).',
+                LocalFirstSyncConfig.diagnosticsEnabled
+                    ? 'The store API returned an empty cart for this app '
+                        'session. Pull down to refresh, or add items here in '
+                        'the app. Opening the cart URL in a browser tab is a '
+                        'different session (you may see null shipping fields '
+                        'or empty items there).'
+                    : 'Add something you like and it will show up here.',
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 textAlign: TextAlign.center,
               ),
@@ -416,6 +430,8 @@ class _CartScreenBody extends ConsumerWidget {
   }
 
   static void _showDebugSheet(BuildContext context) {
+    // Defence in depth: even if a caller forgets the gate, refuse to open.
+    if (!LocalFirstSyncConfig.diagnosticsEnabled) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

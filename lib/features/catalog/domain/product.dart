@@ -5,6 +5,55 @@ import 'role_pricing.dart';
 /// Products with this many units or fewer (but > 0) show the low-stock badge.
 const int kLowStockThreshold = 5;
 
+/// Currency exponent declared by the payload, defaulting to 2 (cents).
+///
+/// The WooCommerce Store API states this explicitly, and the on-device product
+/// cache stores raw API shape, so both carry it. The bundled catalogue
+/// (`assets/data/products.json`) predates the field and holds raw minor units,
+/// which is why 2 is the right default.
+int resolveCurrencyMinorUnit(Map<String, dynamic> j) {
+  final raw = j['currency_minor_unit'] ??
+      (j['prices'] as Map<String, dynamic>?)?['currency_minor_unit'];
+  if (raw is int) return raw;
+  return int.tryParse(raw?.toString() ?? '') ?? 2;
+}
+
+/// Converts a Store API price value to a major-unit amount.
+///
+/// Store API amounts are integers in minor units: `"990"` with
+/// `currency_minor_unit: 2` means **$9.90**. A value carrying a decimal point
+/// is already a major-unit amount and is passed through.
+///
+/// This replaces a magnitude heuristic (`>= 1000 && whole ⇒ cents` for
+/// products, `>= 100` for variants) that rendered every item under $10.00 at
+/// 100x its price and made a product disagree with its own variants.
+double parseMinorUnitPrice(dynamic v, int minorUnit) {
+  if (v == null) return 0.0;
+
+  var divisor = 1.0;
+  for (var i = 0; i < minorUnit; i++) {
+    divisor *= 10;
+  }
+
+  if (v is num) {
+    final d = v.toDouble();
+    // Minor-unit amounts are always whole; a fraction means major units.
+    if (d != d.truncateToDouble()) return d;
+    return d / divisor;
+  }
+  if (v is String) {
+    final s = v.trim();
+    if (s.isEmpty) return 0.0;
+    if (s.contains('.')) {
+      return double.tryParse(s.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
+    }
+    final d = double.tryParse(s.replaceAll(RegExp(r'[^\d]'), ''));
+    if (d == null) return 0.0;
+    return d / divisor;
+  }
+  return 0.0;
+}
+
 class Variant {
   final String sku;
   final String label;
@@ -20,30 +69,19 @@ class Variant {
       RolePricing.roundMoney(price * RolePricing.multiplierFor(role));
 
   factory Variant.fromJson(Map<String, dynamic> j) {
-    // Variations in Store API also use a 'prices' object
+    // Variations in Store API also use a 'prices' object.
     final pObj = j['prices'] as Map<String, dynamic>?;
-    
-    double parsePrice(dynamic v) {
-      if (v == null) return 0.0;
-      double d = 0.0;
-      if (v is num) {
-        d = v.toDouble();
-        if (d >= 100 && d == d.truncateToDouble()) return d / 100;
-        return d;
-      }
-      if (v is String) {
-        d = double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
-        if (d >= 100 && (!v.contains('.') || v.endsWith('.0') || v.endsWith('.00'))) {
-          return d / 100;
-        }
-        return d;
-      }
-      return 0.0;
-    }
+    final minorUnit = resolveCurrencyMinorUnit(j);
     return Variant(
       sku: (j['sku'] ?? '').toString(),
       label: (j['label'] ?? j['name'] ?? '').toString(),
-      price: parsePrice(j['price'] ?? pObj?['price'] ?? j['regular_price'] ?? pObj?['regular_price']),
+      price: parseMinorUnitPrice(
+        j['price'] ??
+            pObj?['price'] ??
+            j['regular_price'] ??
+            pObj?['regular_price'],
+        minorUnit,
+      ),
       inStock: j['inStock'] ?? j['in_stock'] ?? (j['is_in_stock'] ?? true),
     );
   }
@@ -125,32 +163,9 @@ class Product {
 
     final imageList = j['images'] as List?;
     final imageStr = j['image'] as String? ?? '';
-    double parsePriceField(dynamic v) {
-      if (v == null) return 0.0;
-      double? d;
-      if (v is num) {
-        d = v.toDouble();
-        // Values from products.json are already in dollars (pre-converted by fetch script).
-        // Only divide by 100 when the value looks like a raw minor-unit integer from a
-        // *live* Store API response: large whole number (>= 100, no fractional part).
-        // A real dollar price of e.g. $100.00 would come from JSON as 100.0, not 10000.
-        // Threshold: values >= 1000 and whole = almost certainly minor units (cents).
-        if (d >= 1000 && d == d.truncateToDouble()) return d / 100;
-        return d;
-      }
-      if (v is String) {
-        // If the string contains a dot, it's already a dollar amount.
-        if (v.contains('.')) {
-          return double.tryParse(v.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0.0;
-        }
-        d = double.tryParse(v.replaceAll(RegExp(r'[^\d]'), ''));
-        if (d == null) return 0.0;
-        // String with no dot and value >= 1000 = raw minor units (cents from live Store API).
-        if (d >= 1000) return d / 100;
-        return d;
-      }
-      return 0.0;
-    }
+    // See [parseMinorUnitPrice]: Store API amounts are integers in minor units.
+    final minorUnit = resolveCurrencyMinorUnit(j);
+    double parsePriceField(dynamic v) => parseMinorUnitPrice(v, minorUnit);
 
     // Price logic handles local JSON (root keys) and WC Store API (nested 'prices' object)
     final pricesObj = j['prices'] as Map<String, dynamic>?;
@@ -420,9 +435,7 @@ class Product {
 
 /// Web store backup list price + 10% off sale for known `P00x` furniture SKUs.
 Product _applyBackupPricingIfApplicable(Product p) {
-  final key = p.sku?.trim().toUpperCase();
-  if (key == null || key.isEmpty) return p;
-  final reg = kBackupRegularPriceAudBySku[key];
+  final reg = backupRegularPriceForSku(p.sku);
   if (reg == null) return p;
   final sale = RolePricing.roundMoney(reg * 0.9);
   return Product(

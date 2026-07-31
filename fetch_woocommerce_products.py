@@ -120,10 +120,11 @@ def normalize_product(p):
             f = float(val)
         except (TypeError, ValueError):
             return None
-        # Store API returns integer or integer-like string (no decimal point in minor units)
-        # If the string has no dot and value >= 10, it's minor units; divide by divisor.
+        # Store API always returns minor units as an integer string with no
+        # decimal point ("990" => $9.90). The previous `and f >= 10` guard made
+        # anything under 10 minor units (e.g. "5" => $0.05) come out 100x high.
         s = str(val).strip()
-        if '.' not in s and f >= 10:
+        if '.' not in s:
             return round(f / divisor, 2)
         return f
 
@@ -167,6 +168,11 @@ def normalize_product(p):
         "price": price,
         "regularPrice": regular_price,
         "salePrice": sale_price,
+        # The prices above are ALREADY converted to major units (dollars) by
+        # parse_store_price. Declaring an exponent of 0 tells the Dart parser
+        # not to divide again. Without this marker the app has to guess, and
+        # the guess it used to make broke every product under $10.00.
+        "currency_minor_unit": 0,
         "onSale": bool(p.get("on_sale", False)),
         "currency": prices_obj.get("currency_code") or "AUD",
 

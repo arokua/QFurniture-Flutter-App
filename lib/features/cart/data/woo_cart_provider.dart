@@ -6,6 +6,7 @@ import '../../../services/cart_cache_service.dart';
 import '../../../services/cart_sync_service.dart';
 import '../../../services/auth_service.dart';
 import '../domain/cart_item.dart';
+import '../domain/cart_sync_outcome.dart';
 import 'cart_session_refresh.dart';
 import 'store_cart_snapshot.dart';
 
@@ -44,9 +45,11 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
       return _fromCache(cached);
     }
 
-    final synced = await CartSyncService.instance.syncNow(force: true);
-    if (synced != null && synced.items.isNotEmpty) {
-      return _fromCache(synced, fromCache: false);
+    final outcome = await CartSyncService.instance.syncNow(force: true);
+    if (outcome is CartSyncSucceeded) {
+      // Includes the empty-cart case: an empty cart is a real answer, and the
+      // caller must render the empty state rather than an error.
+      return _fromCache(outcome.record, fromCache: false);
     }
 
     try {
@@ -70,9 +73,9 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
   }
 
   Future<void> _refreshInBackground() async {
-    final fresh = await CartSyncService.instance.syncNow(force: true);
-    if (fresh == null) return;
-    final next = _fromCache(fresh, fromCache: false);
+    final outcome = await CartSyncService.instance.syncNow(force: true);
+    if (outcome is! CartSyncSucceeded) return;
+    final next = _fromCache(outcome.record, fromCache: false);
     final current = state.valueOrNull;
     if (current == null || _changed(current, next)) {
       state = AsyncData(next);
@@ -88,7 +91,17 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
         return true;
       }
     }
-    return false;
+    // Quantities can be identical while prices or totals have moved (role
+    // re-pricing, a store-side price change). Comparing only ids/quantities
+    // silently dropped those updates, so compare the rendered totals too.
+    return _totalsSignature(a) != _totalsSignature(b);
+  }
+
+  String _totalsSignature(WooCartState s) {
+    final tv = s.snapshot?.totalsView;
+    if (tv == null) return '-';
+    return '${tv.totalPriceMinor}/${tv.totalItemsMinor}/'
+        '${tv.totalTaxMinor}/${tv.totalShippingMinor}';
   }
 
   Future<WooCartState> _fetchNetwork() async {
@@ -105,9 +118,17 @@ class WooCartNotifier extends AsyncNotifier<WooCartState> {
   }
 
   Future<WooCartState?> _fetchWithCurrentSession() async {
-    final synced = await CartSyncService.instance.syncNow(force: true);
-    if (synced == null || synced.items.isEmpty) return null;
-    return _fromCache(synced, fromCache: false);
+    final outcome = await CartSyncService.instance.syncNow(force: true);
+    // Only a genuine failure justifies falling through to the retry ladder.
+    // Success (empty or not) and skips must not be treated as unavailability.
+    if (outcome is CartSyncSucceeded) {
+      return _fromCache(outcome.record, fromCache: false);
+    }
+    final record = outcome.record;
+    if (outcome is CartSyncSkipped && record != null) {
+      return _fromCache(record);
+    }
+    return null;
   }
 
   Future<void> refresh() async {

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../features/cart/domain/cart_item.dart';
 import 'app_storage_permission.dart';
+import 'atomic_json_file.dart';
 import 'local_sync_logger.dart';
 
 enum CartSyncStatus { idle, pending, syncing, synced, failed }
@@ -119,6 +120,7 @@ class CartCacheService {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
+    await AtomicJsonFile.sweepTempFiles(dir);
     _ready = true;
   }
 
@@ -152,7 +154,7 @@ class CartCacheService {
   Future<void> save(String userKey, CartCacheRecord record) async {
     await init();
     final payload = jsonEncode(record.toJson());
-    await _atomicWrite(await _fileForKey(userKey), payload);
+    await AtomicJsonFile.write(await _fileForKey(userKey), payload);
     localSyncLog('cart saved key=$userKey items=${record.items.length} '
         'status=${record.syncStatus.name}');
   }
@@ -180,12 +182,5 @@ class CartCacheService {
     } catch (e) {
       if (kDebugMode) debugPrint('[CartCache] clearAll error: $e');
     }
-  }
-
-  Future<void> _atomicWrite(File file, String contents) async {
-    final tmp = File('${file.path}.tmp');
-    await tmp.writeAsString(contents, flush: true);
-    if (await file.exists()) await file.delete();
-    await tmp.rename(file.path);
   }
 }
