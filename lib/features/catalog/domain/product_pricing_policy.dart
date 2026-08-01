@@ -15,14 +15,14 @@
 /// written both as `P001` and `P0001`; a strict string match silently failed and
 /// the override never applied, which is why packages showed no price.
 const Map<String, double> kBackupRegularPriceAudBySku = {
-  'P001': 722.6,
-  'P002': 1054.0,
-  'P003': 878.20,
-  'P004': 840.6,
-  'P005': 1094.20,
-  'P006': 902.4,
-  'P007': 852.84,
-  'P008': 749.52,
+  '027 038 162 341 469 498 911': 515.52,
+  '007 021 035 222 363': 269.46,
+  '207 216 231 246 328 416 828': 693.45,
+  '105 149 251 464 454 469 891 929': 763.74,
+  '021 222 246 251 328 367': 586.19,
+  '158 216 268 365 367 435 964': 695.52,
+  '331 423 464 488 642 645 678': 619.92,
+  '324 412 517 555 668 699 875': 695.70,
 };
 
 /// Normalises a package SKU so leading-zero variance cannot cause a miss.
