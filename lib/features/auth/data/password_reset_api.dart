@@ -143,6 +143,74 @@ class PasswordResetApi {
     }
   }
 
+  /// Changes the password of the signed-in user.
+  ///
+  /// Deliberately not `PUT wc/v3/customers/<id>`: that endpoint is role-gated
+  /// on this store, and its failure path retried with the store-wide consumer
+  /// key, so an admin credential ended up rewriting one user's password. This
+  /// route acts only as the caller and verifies [currentPassword] first.
+  Future<PasswordResetResult> changePassword({
+    required String jwt,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$kStoreBaseUrl/wp-json/qtoys/v1/change-password'),
+            headers: {..._headers, 'Authorization': 'Bearer $jwt'},
+            body: jsonEncode({
+              'current_password': currentPassword,
+              'password': newPassword,
+            }),
+          )
+          .timeout(_timeout);
+
+      if (kDebugMode) debugPrint('[PasswordReset] change → ${res.statusCode}');
+
+      if (res.statusCode == 200) return const PasswordResetResult(ok: true);
+      if (res.statusCode == 429) {
+        return PasswordResetResult(
+          ok: false,
+          message: 'Too many attempts. Please wait a moment and try again.',
+          retryAfter: _retryAfter(res),
+        );
+      }
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        return const PasswordResetResult(
+          ok: false,
+          message: 'Please sign in again to change your password.',
+        );
+      }
+
+      if (res.statusCode == 404) {
+        // The plugin predates this route, so the server has nothing to answer.
+        return const PasswordResetResult(
+          ok: false,
+          message: "Changing your password isn't available right now. "
+              "Please contact us and we'll help you straight away.",
+        );
+      }
+
+      switch (_decode(res)?['code']?.toString() ?? '') {
+        case 'qtoys_change_wrong_password':
+          return const PasswordResetResult(
+            ok: false,
+            message: 'That current password is not correct.',
+          );
+        case 'qtoys_reset_weak_password':
+          return const PasswordResetResult(
+            ok: false,
+            message: 'Please choose a stronger password.',
+          );
+      }
+      return PasswordResetResult(ok: false, message: _friendly(res));
+    } catch (e) {
+      if (kDebugMode) debugPrint('[PasswordReset] change error: $e');
+      return const PasswordResetResult(ok: false, message: _offlineMessage);
+    }
+  }
+
   static const Map<String, String> _headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',

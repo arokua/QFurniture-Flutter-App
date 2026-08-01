@@ -41,41 +41,42 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _navigateWhenReady() async {
     final auth = AuthService.instance;
-    // Minimum splash time so the logo doesn't flicker.
-    await Future.delayed(const Duration(milliseconds: 900));
 
-    // Hard lock: no stored session → login first and foremost.
-    if (!auth.isSignedIn) {
-      if (!mounted) return;
-      context.go(AppRoutes.login);
-      return;
-    }
-
-    // Catalogue bootstrap + session validation in parallel.
+    // Started before the splash floor rather than after it, so the catalogue
+    // loads during the animation instead of beginning once it ends.
     final sync = ProductSyncService.instance;
     sync.ensureCatalogLoaded().ignore();
-    final sessionOkFuture = auth.ensureValidSession();
+
+    // Signing in is no longer a precondition for reaching the app, so session
+    // recovery runs alongside the splash instead of gating it.
+    if (auth.isSignedIn) {
+      _resumeSessionInBackground(auth).ignore();
+    }
+
+    // Minimum splash time so the logo doesn't flicker.
+    await Future.delayed(const Duration(milliseconds: 900));
 
     final deadline = DateTime.now().add(const Duration(seconds: 4));
     while (!sync.initialBatchReady && DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(milliseconds: 50));
     }
 
-    final sessionOk = await sessionOkFuture;
     if (!mounted) return;
-    if (!sessionOk) {
-      context.go(AppRoutes.login);
-      return;
-    }
+    // Guests land here too; the router gates the routes that need an identity.
+    context.go(AppRoutes.home);
+  }
 
+  /// Session work that used to block navigation.
+  ///
+  /// Nothing here gates the UI. If the session turns out to be unrecoverable
+  /// `AuthService` signs out, and the router's `refreshListenable` redirects
+  /// from wherever the user has already landed.
+  Future<void> _resumeSessionInBackground(AuthService auth) async {
+    if (!await auth.ensureValidSession()) return;
     // Re-prime Woo cart session cookies after token refresh on cold start.
-    await StoreCartApiService.instance
-        .bootstrapSessionFromJwt(auth.jwtToken);
+    await StoreCartApiService.instance.bootstrapSessionFromJwt(auth.jwtToken);
     auth.warmWebSessionCode().ignore();
     OrderHistorySyncService.instance.syncNow(force: true).ignore();
-
-    if (!mounted) return;
-    context.go(AppRoutes.home);
   }
 
   @override

@@ -363,3 +363,108 @@ if ( ! function_exists( 'qtoys_pr_issue_jwt' ) ) {
 		return null;
 	}
 }
+
+/*
+ * Signed-in password change.
+ *
+ * The app previously did this with PUT wc/v3/customers/<id>, which on this site
+ * is role-gated ("cannot reset password using this endpoint with role ...").
+ * Worse, when the user's own token was refused it retried with the store-wide
+ * consumer key — an admin credential rewriting one user's password. This route
+ * only ever acts as the caller, and proves possession of the current password
+ * first, which the WooCommerce endpoint never did.
+ *
+ * Registered separately from the reset routes so the two can be reasoned about
+ * independently: these require an identity, those cannot have one.
+ */
+if ( ! function_exists( 'qtoys_pr_register_change_route' ) ) {
+	function qtoys_pr_register_change_route() {
+		register_rest_route(
+			'qtoys/v1',
+			'/change-password',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => 'qtoys_pr_handle_change',
+				'permission_callback' => function () {
+					return is_user_logged_in();
+				},
+				'args'                => array(
+					'current_password' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+					'password'         => array(
+						'required'          => true,
+						'type'              => 'string',
+						// Not sanitised, for the same reason as the reset route.
+						'validate_callback' => function ( $value ) {
+							return is_string( $value )
+								&& strlen( $value ) >= QTOYS_PR_MIN_PASSWORD
+								&& strlen( $value ) <= 128;
+						},
+					),
+				),
+			)
+		);
+	}
+	add_action( 'rest_api_init', 'qtoys_pr_register_change_route' );
+}
+
+if ( ! function_exists( 'qtoys_pr_handle_change' ) ) {
+	function qtoys_pr_handle_change( WP_REST_Request $request ) {
+		$user = wp_get_current_user();
+		if ( ! $user || ! $user->ID ) {
+			return new WP_REST_Response(
+				array(
+					'success' => false,
+					'code'    => 'qtoys_change_not_signed_in',
+					'message' => 'Please sign in again.',
+				),
+				401
+			);
+		}
+
+		// Per-user, so one account cannot be used to brute-force its own
+		// current password, and per-IP as a backstop.
+		if ( qtoys_pr_throttle( 'chg_user', (string) $user->ID, 10, HOUR_IN_SECONDS )
+			|| qtoys_pr_throttle( 'chg_ip', qtoys_pr_client_ip(), 30, HOUR_IN_SECONDS ) ) {
+			return qtoys_pr_rate_limited_response();
+		}
+
+		$current  = (string) $request->get_param( 'current_password' );
+		$password = (string) $request->get_param( 'password' );
+
+		if ( ! wp_check_password( $current, $user->user_pass, $user->ID ) ) {
+			return new WP_REST_Response(
+				array(
+					'success' => false,
+					'code'    => 'qtoys_change_wrong_password',
+					'message' => 'That current password is not correct.',
+				),
+				400
+			);
+		}
+
+		if ( strlen( $password ) < QTOYS_PR_MIN_PASSWORD ) {
+			return new WP_REST_Response(
+				array(
+					'success' => false,
+					'code'    => 'qtoys_reset_weak_password',
+					'message' => 'Please choose a stronger password.',
+				),
+				400
+			);
+		}
+
+		reset_password( $user, $password );
+
+		/*
+		 * Deliberately NOT destroying sessions here, unlike the reset route.
+		 * A reset is "I lost control of this account, evict everyone"; a
+		 * voluntary change is not, and tearing down the caller's own session
+		 * would sign the app out at the moment the change succeeded.
+		 */
+
+		return new WP_REST_Response( array( 'success' => true ), 200 );
+	}
+}

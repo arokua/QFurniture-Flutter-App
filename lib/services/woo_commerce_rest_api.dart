@@ -8,7 +8,6 @@ import '../config/store_config.dart';
 import '../features/cart/data/store_cart_snapshot.dart';
 import '../features/cart/domain/role_cart_pricing.dart';
 import '../features/orders/domain/woo_order_summary.dart';
-import '../utils/user_facing_errors.dart';
 
 /// WooCommerce REST API (`/wp-json/wc/v3/...`) with Basic-auth + JWT fallbacks.
 class WooCommerceRestApi {
@@ -122,57 +121,13 @@ class WooCommerceRestApi {
     return res;
   }
 
-  /// Sets a new password on the signed-in customer's WooCommerce account.
-  ///
-  /// Used by the in-app change-password screen, which replaced a link out to
-  /// the storefront. Returns null on success, or a message safe to show.
-  ///
-  /// The password is sent only in the request body, never in a URL or a log
-  /// line — the debug output below deliberately prints the status code alone.
-  Future<String?> changeCustomerPassword({
-    required String jwt,
-    required int customerId,
-    required String newPassword,
-  }) async {
-    if (customerId <= 0) return 'We could not identify your account.';
-
-    final uri = Uri.parse('$_v3Base/customers/$customerId');
-    final encoded = jsonEncode({'password': newPassword});
-
-    try {
-      var res = await http
-          .put(uri, headers: _jsonPostHeaders(jwt), body: encoded)
-          .timeout(const Duration(seconds: 30));
-
-      // Fall back to key auth only if the user's own token was refused, so a
-      // successful user-scoped write is always preferred.
-      if (res.statusCode != 200 && _basicAuthHeader != null) {
-        res = await http
-            .put(
-              uri,
-              headers: {..._basicHeaders(), 'Content-Type': 'application/json'},
-              body: encoded,
-            )
-            .timeout(const Duration(seconds: 30));
-      }
-
-      if (kDebugMode) {
-        debugPrint('[WooRest] change password → ${res.statusCode}');
-      }
-      if (res.statusCode == 200) return null;
-
-      try {
-        final decoded = jsonDecode(res.body);
-        if (decoded is Map && decoded['message'] != null) {
-          return sanitizeAuthApiMessage(decoded['message'].toString());
-        }
-      } catch (_) {}
-      return 'We could not update your password just now.';
-    } catch (e) {
-      if (kDebugMode) debugPrint('[WooRest] change password error: $e');
-      return "We couldn't reach the store. Check your connection and try again.";
-    }
-  }
+  // changeCustomerPassword() was removed on 2026-08-01. It PUT to
+  // wc/v3/customers/<id>, which WooCommerce blocks outright for any role
+  // outside allowed_roles() — the `'password' === $prop` short-circuit in
+  // WC_REST_Customers_V1_Controller::update_item_permissions_check means no
+  // request shape can pass. It also retried with the store-wide consumer key,
+  // so an admin credential rewrote one user's password. Replaced by
+  // PasswordResetApi.changePassword → POST qtoys/v1/change-password.
 
   List<WooOrderSummary> _parseOrderList(dynamic decoded) {
     if (decoded is! List) return const [];

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../services/auth_service.dart';
-import '../../../services/woo_commerce_rest_api.dart';
+import '../data/password_reset_api.dart';
 import '../domain/password_policy.dart';
 import 'widgets/new_password_fields.dart';
+import 'widgets/password_field.dart';
 
 /// Native change-password for a signed-in user.
 ///
@@ -21,6 +22,7 @@ class ChangePasswordScreen extends StatefulWidget {
 }
 
 class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
+  final _current = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -29,7 +31,18 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // PasswordField has no onChanged, and _canSubmit depends on this field.
+    _current.addListener(_onCurrentChanged);
+  }
+
+  void _onCurrentChanged() => setState(() {});
+
+  @override
   void dispose() {
+    _current.removeListener(_onCurrentChanged);
+    _current.dispose();
     _password.dispose();
     _confirm.dispose();
     super.dispose();
@@ -37,6 +50,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   bool get _canSubmit =>
       !_submitting &&
+      _current.text.isNotEmpty &&
       PasswordPolicy.isSubmittable(_password.text, _confirm.text);
 
   Future<void> _submit() async {
@@ -59,21 +73,18 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       return;
     }
 
-    final customerId = session?.customerId ??
-        await AuthService.instance.ensureCustomerIdForCurrentSession();
-
-    final error = await WooCommerceRestApi.instance.changeCustomerPassword(
+    final result = await PasswordResetApi.instance.changePassword(
       jwt: token,
-      customerId: customerId ?? 0,
+      currentPassword: _current.text,
       newPassword: _password.text,
     );
 
     if (!mounted) return;
 
-    if (error != null) {
+    if (!result.ok) {
       setState(() {
         _submitting = false;
-        _error = error;
+        _error = result.message;
       });
       return;
     }
@@ -109,6 +120,16 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   style: theme.textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 24),
+                // Possession of the current password is what stops a borrowed
+                // unlocked phone from becoming an account takeover.
+                PasswordField(
+                  controller: _current,
+                  labelText: 'Current password',
+                  autofillHints: const [AutofillHints.password],
+                  textInputAction: TextInputAction.next,
+                  enabled: !_submitting,
+                ),
+                const SizedBox(height: 20),
                 NewPasswordFields(
                   passwordController: _password,
                   confirmController: _confirm,

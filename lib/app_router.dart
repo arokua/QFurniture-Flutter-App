@@ -27,6 +27,25 @@ abstract class AppRoutes {
   static String product(int id) => '/p/$id';
 }
 
+/// Routes a signed-out visitor may browse.
+///
+/// Browsing and building a basket are deliberately open: the cart engine is
+/// local-first, so a guest basket costs no network at all and is merged into
+/// the account by `CartCoordinator.adoptCart` on sign-in. Only the routes that
+/// genuinely need an identity are gated.
+const Set<String> _guestRoutes = {
+  AppRoutes.login,
+  AppRoutes.register,
+  AppRoutes.home,
+  AppRoutes.homeCategories,
+  AppRoutes.homeMore,
+  AppRoutes.cart,
+  AppRoutes.favorites,
+};
+
+bool _isGuestRoute(String path) =>
+    _guestRoutes.contains(path) || path.startsWith('/p/');
+
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final router = GoRouter(
@@ -44,13 +63,26 @@ final router = GoRouter(
     final isPublicAuth =
         path == AppRoutes.login || path == AppRoutes.register;
 
-    // Hard lock: nothing in the app is reachable until the user is signed in.
     if (!signedIn) {
-      return isPublicAuth ? null : AppRoutes.login;
+      if (_isGuestRoute(path)) return null;
+      // Carry the intended destination so signing in lands the user where they
+      // were going instead of dumping them on the home tab.
+      return Uri(
+        path: AppRoutes.login,
+        queryParameters: <String, String>{'from': path},
+      ).toString();
     }
 
     // Signed in: keep users out of the auth screens.
-    if (isPublicAuth) return AppRoutes.home;
+    if (isPublicAuth) {
+      final from = state.uri.queryParameters['from'];
+      // A `from` pointing back at an auth screen would bounce forever.
+      if (from == null || from.isEmpty || from == AppRoutes.login ||
+          from == AppRoutes.register) {
+        return AppRoutes.home;
+      }
+      return from;
+    }
     return null;
   },
   routes: [
