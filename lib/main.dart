@@ -7,6 +7,7 @@ import 'config/store_cart_api_service.dart';
 import 'features/cart/data/cart_providers.dart';
 import 'features/cart/data/cart_remote_sync_binding.dart';
 import 'features/checkout/data/checkout_providers.dart';
+import 'services/app_log.dart';
 import 'services/product_sync_service.dart';
 import 'services/product_image_cache_service.dart';
 import 'services/web_auth_cookie_store.dart';
@@ -22,6 +23,11 @@ void main() async {
   // clip the bottom of the app content (the 20px overflow bug).
   // SafeArea / MediaQuery.padding still handle insets correctly inside the app.
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+  // Before anything that logs. Kept as a literal rather than pulling in
+  // package_info_plus: one string is not worth a plugin dependency, but it
+  // must be bumped alongside pubspec `version:`.
+  AppLog.configure(appVersion: '1.0.0+1');
 
   await dotenv.load(fileName: '.env');
 

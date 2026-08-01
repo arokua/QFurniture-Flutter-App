@@ -10,7 +10,6 @@ import '../features/catalog/domain/category_filter.dart';
 import '../features/catalog/providers/category_providers.dart';
 import '../features/catalog/presentation/widgets/category_tree_tile.dart';
 import '../utils/user_facing_errors.dart';
-import '../features/catalog/utils/html_utils.dart';
 
 /// Categories tab: fetch from Store API, build tree (parent/children), display.
 /// Tap category -> filter catalog and switch to Catalog tab.

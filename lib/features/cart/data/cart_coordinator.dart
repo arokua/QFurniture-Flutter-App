@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../../config/cart_engine_config.dart';
+import '../../../services/app_log.dart';
 import '../../../services/cart_cache_service.dart'
     show CartCacheRecord, CartSyncStatus;
 import '../domain/cart_document.dart';
@@ -327,11 +328,22 @@ class CartCoordinator {
 
     _reconcileInFlight = true;
     final dispatchedAtSequence = _doc.localSequence;
+    final op = AppLog.begin('cart.reconcile', fields: {
+      'reason': reason.name,
+      'localSeq': dispatchedAtSequence,
+      'revision': _doc.revision,
+      'queueDepth': _doc.pending.length,
+      'forced': force,
+    });
     try {
       await _gateway.ensureSession();
       final result = await _gateway.fetchCart();
       if (!result.ok) {
         _noteNetworkOutcome(transient: result.isTransient);
+        op.end(
+          result: result.isTransient ? LogResult.transient : LogResult.permanent,
+          fields: {'reason': result.detail},
+        );
         await _enqueue(() async {
           _doc = _doc.copyWith(
             syncStatus: CartSyncStatus.failed,
@@ -351,6 +363,12 @@ class CartCoordinator {
       await _enqueue(() async {
         _absorbServerCart(result.cartJson, dispatchedAtSequence);
         await _persist();
+      });
+      op.end(result: LogResult.ok, fields: {
+        // Whether the server answer was accepted or rejected as stale is the
+        // single most useful thing to know when intent and display disagree.
+        'stale': _doc.localSequence > dispatchedAtSequence,
+        'lines': _doc.lines.length,
       });
       // An empty cart is a successful answer, not a failure.
       return CartSyncSucceeded(_asRecord());
@@ -439,9 +457,19 @@ class CartCoordinator {
         });
 
         final dispatchedAtSequence = _doc.localSequence;
+        final op = AppLog.begin('cart.dispatch', fields: {
+          'mutation': mutation.op.name,
+          'productId': mutation.productId,
+          'target': mutation.targetQuantity,
+          'localSeq': mutation.localSequence,
+          'revision': _doc.revision,
+          'queueDepth': _doc.pending.length,
+          'retry': mutation.retryCount,
+        });
         final result = await _dispatch(mutation);
 
         if (result.ok) {
+          op.end(result: LogResult.ok);
           _noteNetworkOutcome(transient: false);
           await _enqueue(() async {
             _doc = _doc.copyWith(pending: _without(mutation.mutationId));
@@ -463,6 +491,16 @@ class CartCoordinator {
         final givingUp = !result.isTransient || exhausted;
         final backoff = CartEngineConfig.backoffFor(retries - 1);
         _noteNetworkOutcome(transient: result.isTransient);
+
+        op.end(
+          result: givingUp ? LogResult.permanent : LogResult.transient,
+          fields: {
+            'retry': retries,
+            'exhausted': exhausted,
+            'backoffMs': givingUp ? 0 : backoff.inMilliseconds,
+            'reason': result.detail,
+          },
+        );
 
         await _enqueue(() async {
           final updated = givingUp

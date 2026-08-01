@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../../../config/store_cart_api_service.dart';
+import '../../../services/app_log.dart';
 import '../domain/cart_mutation.dart';
 
 /// Outcome of one remote cart call.
@@ -90,13 +91,17 @@ class StoreCartApiGateway implements CartRemoteGateway {
 
   @override
   Future<GatewayResult> fetchCart() async {
+    final op = AppLog.begin('cart.fetch', fields: {'endpoint': 'store/v1/cart'});
     try {
       final res = await _api.fetchFullCart();
       if (!res.success || res.data == null) {
+        op.end(result: LogResult.transient, fields: {'reason': 'no-data'});
         return const GatewayResult.transientFailure('cart fetch unavailable');
       }
+      op.end(result: LogResult.ok);
       return GatewayResult.success(cartJson: res.data);
     } catch (e) {
+      op.end(result: LogResult.transient, fields: {'reason': _describe(e)});
       return GatewayResult.transientFailure(_describe(e));
     }
   }
@@ -107,6 +112,11 @@ class StoreCartApiGateway implements CartRemoteGateway {
     required int targetQuantity,
     String? knownKey,
   }) async {
+    final op = AppLog.begin('cart.setQuantity', fields: {
+      'endpoint': 'store/v1/cart',
+      'productId': productId,
+      'target': targetQuantity,
+    });
     try {
       final ok = await _api.updateOrAddByProductId(
         productId,
@@ -117,22 +127,28 @@ class StoreCartApiGateway implements CartRemoteGateway {
         // The Store API client collapses non-2xx to `false`, so the class of
         // error is not recoverable here. Treat it as transient and let the
         // bounded retry budget stop the loop.
+        op.end(result: LogResult.transient, fields: {'reason': 'rejected'});
         return const GatewayResult.transientFailure('cart update rejected');
       }
+      op.end(result: LogResult.ok);
       return const GatewayResult.success();
     } catch (e) {
+      op.end(result: LogResult.transient, fields: {'reason': _describe(e)});
       return GatewayResult.transientFailure(_describe(e));
     }
   }
 
   @override
   Future<GatewayResult> clearCart() async {
+    final op = AppLog.begin('cart.clear', fields: {'endpoint': 'store/v1/cart'});
     try {
       final ok = await _api.clearCart();
+      op.end(result: ok ? LogResult.ok : LogResult.transient);
       return ok
           ? const GatewayResult.success()
           : const GatewayResult.transientFailure('cart clear rejected');
     } catch (e) {
+      op.end(result: LogResult.transient, fields: {'reason': _describe(e)});
       return GatewayResult.transientFailure(_describe(e));
     }
   }

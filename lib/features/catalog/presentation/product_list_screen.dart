@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../../cart/data/cart_provider.dart';
@@ -15,7 +14,6 @@ import '../providers/category_providers.dart';
 import '../domain/category_filter.dart';
 import 'widgets/low_stock_badge.dart';
 import 'widgets/product_display_image.dart';
-import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../services/auth_service.dart';
@@ -1010,67 +1008,6 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     );
   }
 
-  Widget _buildProductCardShimmer() {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 3,
-            child: Container(color: Colors.grey[300]),
-          ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                      height: 16,
-                      width: double.infinity,
-                      color: Colors.grey[300]),
-                  const SizedBox(height: 8),
-                  Container(height: 14, width: 80, color: Colors.grey[300]),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProductListItemShimmer() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Container(width: 120, height: 120, color: Colors.grey[300]),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                      height: 16,
-                      width: double.infinity,
-                      color: Colors.grey[300]),
-                  const SizedBox(height: 8),
-                  Container(height: 14, width: 100, color: Colors.grey[300]),
-                  const SizedBox(height: 8),
-                  Container(height: 18, width: 80, color: Colors.grey[300]),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 void _showQuickView(

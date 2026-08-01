@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:http/http.dart' as http;
 
 import '../../../config/store_config.dart';
+import '../../../services/app_log.dart';
 
 /// Outcome of a password-reset call.
 ///
@@ -53,16 +53,21 @@ class PasswordResetApi {
       'If that email has an account, we\'ve sent a 6-digit code to it.';
 
   Future<PasswordResetResult> requestCode({required String email}) async {
+    final op = AppLog.begin('auth.passwordReset.request',
+        fields: {'endpoint': 'qtoys/v1/password-reset/request'});
     try {
       final res = await http
           .post(
             Uri.parse('$_base/request'),
-            headers: _headers,
+            headers: _headersFor(op),
             body: jsonEncode({'email': email.trim()}),
           )
           .timeout(_timeout);
 
-      if (kDebugMode) debugPrint('[PasswordReset] request → ${res.statusCode}');
+      op.end(
+        result: res.statusCode == 200 ? LogResult.ok : LogResult.permanent,
+        httpStatus: res.statusCode,
+      );
 
       if (res.statusCode == 429) {
         return PasswordResetResult(
@@ -79,7 +84,7 @@ class PasswordResetApi {
       }
       return PasswordResetResult(ok: false, message: _friendly(res));
     } catch (e) {
-      if (kDebugMode) debugPrint('[PasswordReset] request error: $e');
+      op.end(result: LogResult.transient, fields: {'reason': e.runtimeType});
       return const PasswordResetResult(ok: false, message: _offlineMessage);
     }
   }
@@ -89,11 +94,13 @@ class PasswordResetApi {
     required String code,
     required String newPassword,
   }) async {
+    final op = AppLog.begin('auth.passwordReset.confirm',
+        fields: {'endpoint': 'qtoys/v1/password-reset/confirm'});
     try {
       final res = await http
           .post(
             Uri.parse('$_base/confirm'),
-            headers: _headers,
+            headers: _headersFor(op),
             body: jsonEncode({
               'email': email.trim(),
               'code': code.trim(),
@@ -102,7 +109,10 @@ class PasswordResetApi {
           )
           .timeout(_timeout);
 
-      if (kDebugMode) debugPrint('[PasswordReset] confirm → ${res.statusCode}');
+      op.end(
+        result: res.statusCode == 200 ? LogResult.ok : LogResult.permanent,
+        httpStatus: res.statusCode,
+      );
 
       if (res.statusCode == 429) {
         return PasswordResetResult(
@@ -138,7 +148,7 @@ class PasswordResetApi {
       }
       return PasswordResetResult(ok: false, message: _friendly(res));
     } catch (e) {
-      if (kDebugMode) debugPrint('[PasswordReset] confirm error: $e');
+      op.end(result: LogResult.transient, fields: {'reason': e.runtimeType});
       return const PasswordResetResult(ok: false, message: _offlineMessage);
     }
   }
@@ -154,11 +164,13 @@ class PasswordResetApi {
     required String currentPassword,
     required String newPassword,
   }) async {
+    final op = AppLog.begin('auth.changePassword',
+        fields: {'endpoint': 'qtoys/v1/change-password'});
     try {
       final res = await http
           .post(
             Uri.parse('$kStoreBaseUrl/wp-json/qtoys/v1/change-password'),
-            headers: {..._headers, 'Authorization': 'Bearer $jwt'},
+            headers: {..._headersFor(op), 'Authorization': 'Bearer $jwt'},
             body: jsonEncode({
               'current_password': currentPassword,
               'password': newPassword,
@@ -166,7 +178,10 @@ class PasswordResetApi {
           )
           .timeout(_timeout);
 
-      if (kDebugMode) debugPrint('[PasswordReset] change → ${res.statusCode}');
+      op.end(
+        result: res.statusCode == 200 ? LogResult.ok : LogResult.permanent,
+        httpStatus: res.statusCode,
+      );
 
       if (res.statusCode == 200) return const PasswordResetResult(ok: true);
       if (res.statusCode == 429) {
@@ -215,7 +230,7 @@ class PasswordResetApi {
       }
       return PasswordResetResult(ok: false, message: _friendly(res));
     } catch (e) {
-      if (kDebugMode) debugPrint('[PasswordReset] change error: $e');
+      op.end(result: LogResult.transient, fields: {'reason': e.runtimeType});
       return const PasswordResetResult(ok: false, message: _offlineMessage);
     }
   }
@@ -225,6 +240,11 @@ class PasswordResetApi {
     'Accept': 'application/json',
     'User-Agent': kAppUserAgent,
   };
+
+  /// Never logs the email, the code or the password — only the outcome. The
+  /// correlation id goes out as a header so the plugin can log the same id.
+  static Map<String, String> _headersFor(OperationLog op) =>
+      <String, String>{..._headers, ...op.headers};
 
   static const String _offlineMessage =
       "We couldn't reach the store. Check your connection and try again.";

@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 
 import '../config/store_cart_api_service.dart';
 import '../config/store_config.dart';
-import '../features/cart/data/store_cart_snapshot.dart';
 import '../features/cart/domain/role_cart_pricing.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 

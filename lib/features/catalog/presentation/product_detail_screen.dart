@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app_router.dart';
-import '../utils/asset_path.dart';
 import '../utils/html_utils.dart';
 import '../../../providers.dart';
 import '../../../config/store_config.dart';

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint;
 
 /// Sanitize for path: same as download_product_images.py (replace non-word except - and . with _).
 String sanitizeForPath(String s) {

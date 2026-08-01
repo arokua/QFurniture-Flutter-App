@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../app_router.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 import '../services/order_history_sync_service.dart';
 import 'post_checkout_navigation.dart';

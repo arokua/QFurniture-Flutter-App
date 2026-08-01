@@ -241,6 +241,30 @@ function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
         }
     }
 
+    /*
+     * Order attribution — the "Origin" column in Orders and Analytics
+     * (WooCommerce 8.5+).
+     *
+     * Attribution is normally captured by JavaScript on the storefront, which
+     * writes a hidden field at checkout. That JS never runs for an order
+     * created over REST, so nothing populates these keys and every app order
+     * reports as "Unknown". `created_via` above is a different field and does
+     * not feed the Origin column.
+     *
+     * source_type is 'utm' rather than a dedicated app type because 'utm'
+     * renders as "Source: {utm_source}" on every version that has attribution
+     * at all, whereas the newer type names vary by release.
+     *
+     * Only written when absent, so a client that sends its own attribution
+     * (or a re-save of an existing order) is never overwritten.
+     */
+    if ((string) $order->get_meta('_wc_order_attribution_source_type', true) === '') {
+        $order->update_meta_data('_wc_order_attribution_source_type', 'utm');
+        $order->update_meta_data('_wc_order_attribution_utm_source', 'Qtoys Mobile App');
+        $order->update_meta_data('_wc_order_attribution_utm_medium', 'mobile app');
+        $order->update_meta_data('_wc_order_attribution_device_type', 'Mobile');
+    }
+
     return $order;
 }
 

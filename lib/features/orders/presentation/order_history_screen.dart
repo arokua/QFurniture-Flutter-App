@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 
 import '../../../config/store_config.dart';
 import '../../../services/auth_service.dart';
-import '../../../services/order_history_sync_service.dart';
 import '../../../widgets/local_sync_status_chip.dart';
 import '../../../utils/money_format.dart';
 import '../../catalog/presentation/store_webview_screen.dart';
@@ -153,21 +152,7 @@ class OrderHistoryScreen extends ConsumerWidget {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
-                                  TextButton.icon(
-                                    icon: const Icon(Icons.open_in_new, size: 18),
-                                    label: const Text('View'),
-                                    onPressed: () {
-                                      StoreWebViewScreen.push(
-                                        context,
-                                        storeOrderViewUrl(o.id),
-                                        attemptWebLogin:
-                                            AuthService.instance
-                                                    .currentSession !=
-                                                null,
-                                        useMobileLayout: true,
-                                      );
-                                    },
-                                  ),
+                                  
                                   TextButton.icon(
                                     icon: const Icon(Icons.replay, size: 18),
                                     label: const Text('Place same order'),
