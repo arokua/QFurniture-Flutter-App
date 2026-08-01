@@ -155,6 +155,39 @@ if ( ! function_exists( 'qtoys_pr_rate_limited_response' ) ) {
 	}
 }
 
+if ( ! function_exists( 'qtoys_pr_is_privileged' ) ) {
+	/**
+	 * Accounts whose password the app must never change.
+	 *
+	 * Administrators do not sign in to the app, so there is no legitimate flow
+	 * to lose here — only the most valuable account on the store to gain if any
+	 * part of this plugin is ever wrong. Checked by capability as well as role
+	 * name, so a custom high-privilege role is covered too.
+	 */
+	function qtoys_pr_is_privileged( $user ) {
+		if ( ! $user || empty( $user->ID ) ) {
+			return true; // Fail closed.
+		}
+		if ( in_array( 'administrator', (array) $user->roles, true ) ) {
+			return true;
+		}
+		return user_can( $user, 'manage_options' ) || user_can( $user, 'edit_users' );
+	}
+}
+
+if ( ! function_exists( 'qtoys_pr_privileged_blocked_response' ) ) {
+	function qtoys_pr_privileged_blocked_response() {
+		return new WP_REST_Response(
+			array(
+				'success' => false,
+				'code'    => 'qtoys_privileged_account',
+				'message' => 'For security, this account\'s password has to be changed on the website.',
+			),
+			403
+		);
+	}
+}
+
 if ( ! function_exists( 'qtoys_pr_handle_request' ) ) {
 	/**
 	 * Emails a 6-digit code.
@@ -187,6 +220,14 @@ if ( ! function_exists( 'qtoys_pr_handle_request' ) ) {
 			// Same shape, same status, no timing giveaway worth chasing here:
 			// the expensive path below is dominated by wp_mail, which an
 			// attacker cannot observe from the response anyway.
+			return $generic;
+		}
+
+		if ( qtoys_pr_is_privileged( $user ) ) {
+			// Silently send nothing rather than answer differently. A distinct
+			// response here would turn this endpoint into an oracle for "which
+			// address is an administrator", which is worse than the block is
+			// worth. With no code ever issued, confirm can never succeed.
 			return $generic;
 		}
 
@@ -264,6 +305,13 @@ if ( ! function_exists( 'qtoys_pr_handle_confirm' ) ) {
 
 		$user = get_user_by( 'email', $email );
 		if ( ! $user ) {
+			return qtoys_pr_invalid_code_response();
+		}
+
+		// Defence in depth: request never issues a code for these accounts, so
+		// this should be unreachable. Deliberately the same indistinguishable
+		// response as a bad code, for the same anti-enumeration reason.
+		if ( qtoys_pr_is_privileged( $user ) ) {
 			return qtoys_pr_invalid_code_response();
 		}
 
@@ -422,6 +470,12 @@ if ( ! function_exists( 'qtoys_pr_handle_change' ) ) {
 				),
 				401
 			);
+		}
+
+		// The caller is already authenticated as themselves here, so a distinct
+		// message leaks nothing they do not already know about their own account.
+		if ( qtoys_pr_is_privileged( $user ) ) {
+			return qtoys_pr_privileged_blocked_response();
 		}
 
 		// Per-user, so one account cannot be used to brute-force its own

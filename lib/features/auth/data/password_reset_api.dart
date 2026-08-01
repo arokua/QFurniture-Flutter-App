@@ -176,6 +176,15 @@ class PasswordResetApi {
           retryAfter: _retryAfter(res),
         );
       }
+      final code = _decode(res)?['code']?.toString() ?? '';
+
+      if (code == 'qtoys_privileged_account') {
+        return const PasswordResetResult(
+          ok: false,
+          message: 'For security, this account\'s password has to be changed '
+              'on the website rather than in the app.',
+        );
+      }
       if (res.statusCode == 401 || res.statusCode == 403) {
         return const PasswordResetResult(
           ok: false,
@@ -192,7 +201,7 @@ class PasswordResetApi {
         );
       }
 
-      switch (_decode(res)?['code']?.toString() ?? '') {
+      switch (code) {
         case 'qtoys_change_wrong_password':
           return const PasswordResetResult(
             ok: false,

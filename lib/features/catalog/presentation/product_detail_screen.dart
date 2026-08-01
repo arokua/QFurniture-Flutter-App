@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
@@ -143,11 +144,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  /// Richer green for the product-detail header (not washed-out primaryContainer).
-  static const _headerGreen = Color(0xFF00C300);
-
   Widget _buildProductDetail(BuildContext context, Product p) {
-    final decodedName = decodeHtmlEntities(p.name);
     return ListenableBuilder(
       listenable: AuthService.instance,
       builder: (context, _) {
@@ -156,13 +153,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             ref.watch(cartProvider).length;
 
         return Scaffold(
+          // Lets the gallery run to the top of the screen behind the controls.
+          extendBodyBehindAppBar: true,
           appBar: AppBar(
-            backgroundColor: _headerGreen,
+            backgroundColor: Colors.transparent,
             foregroundColor: Colors.white,
             elevation: 0,
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
+            // Material 3 tints the bar once content scrolls under it, which
+            // would quietly undo the transparency on scroll.
+            scrolledUnderElevation: 0,
+            systemOverlayStyle: SystemUiOverlayStyle.light,
+            leading: _ScrimIconButton(
               tooltip: 'Back',
+              icon: const Icon(Icons.arrow_back),
               onPressed: () {
                 if (context.canPop()) {
                   context.pop();
@@ -171,23 +174,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 }
               },
             ),
-            title: Text(
-              decodedName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
             actions: [
-              IconButton(
+              _ScrimIconButton(
+                tooltip: 'Cart',
                 icon: Badge(
                   isLabelVisible: cartCount > 0,
                   label: Text('$cartCount'),
                   child: const Icon(Icons.shopping_cart_outlined),
                 ),
-                tooltip: 'Cart',
                 onPressed: () {
                   if (!AuthService.instance.isSignedIn) {
                     context.push(AppRoutes.login);
@@ -1175,6 +1169,42 @@ class _ImageGalleryIndicator extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Header icon carrying its own scrim.
+///
+/// The product header is transparent over photography that can be light or dark
+/// anywhere behind these controls, and a flat white icon disappears against a
+/// pale image. The scrim keeps back and cart legible without reintroducing a
+/// bar behind them.
+class _ScrimIconButton extends StatelessWidget {
+  const _ScrimIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final Widget icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.32),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: IconButton(
+          icon: icon,
+          tooltip: tooltip,
+          color: Colors.white,
+          onPressed: onPressed,
         ),
       ),
     );
