@@ -794,18 +794,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 8),
-        TextButton.icon(
-          onPressed: () {
-            StoreWebViewScreen.push(
-              context,
-              permalink,
-              attemptWebLogin: AuthService.instance.currentSession != null,
-            );
-          },
-          icon: const Icon(Icons.link, size: 18),
-          label: const Text('View full product details on website'),
-        ),
+        // const SizedBox(height: 8),
+        // TextButton.icon(
+        //   onPressed: () {
+        //     StoreWebViewScreen.push(
+        //       context,
+        //       permalink,
+        //       attemptWebLogin: AuthService.instance.currentSession != null,
+        //     );
+        //   },
+        //   icon: const Icon(Icons.link, size: 18),
+        //   label: const Text('View full product details on website'),
+        // ),
       ],
     );
   }
