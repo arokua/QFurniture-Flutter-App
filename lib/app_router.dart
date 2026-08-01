@@ -18,6 +18,7 @@ abstract class AppRoutes {
   static const String login = '/login';
   static const String register = '/register';
   static const String home = '/home';
+  static const String homeNewArrivals = '/home/new-arrivals';
   static const String homeCategories = '/home/categories';
   static const String homeMore = '/home/more';
   static const String cart = '/cart';
@@ -37,6 +38,7 @@ const Set<String> _guestRoutes = {
   AppRoutes.login,
   AppRoutes.register,
   AppRoutes.home,
+  AppRoutes.homeNewArrivals,
   AppRoutes.homeCategories,
   AppRoutes.homeMore,
   AppRoutes.cart,
@@ -103,12 +105,16 @@ final router = GoRouter(
       builder: (_, __) => const MainTabScreen(initialIndex: 0),
     ),
     GoRoute(
-      path: AppRoutes.homeCategories,
+      path: AppRoutes.homeNewArrivals,
       builder: (_, __) => const MainTabScreen(initialIndex: 1),
     ),
     GoRoute(
-      path: AppRoutes.homeMore,
+      path: AppRoutes.homeCategories,
       builder: (_, __) => const MainTabScreen(initialIndex: 2),
+    ),
+    GoRoute(
+      path: AppRoutes.homeMore,
+      builder: (_, __) => const MainTabScreen(initialIndex: 3),
     ),
     GoRoute(
       path: AppRoutes.cart,

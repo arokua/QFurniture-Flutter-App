@@ -9,6 +9,7 @@ import '../../cart/data/woo_cart_provider.dart';
 import '../../cart/presentation/widgets/stock_quantity_field.dart';
 import '../domain/product.dart';
 import '../domain/product_pricing_policy.dart';
+import '../domain/new_arrivals.dart';
 import 'category_picker_sheet.dart';
 import '../providers/category_providers.dart';
 import '../domain/category_filter.dart';
@@ -122,9 +123,14 @@ bool _exactCategoryNameMatch(Product p, String categoryName) {
 }
 
 List<Product> _newestProducts(List<Product> products, int limit) {
-  if (products.length <= limit) return products;
   final sorted = List<Product>.from(products);
-  sorted.sort((a, b) => b.id.compareTo(a.id));
+  sorted.sort((a, b) {
+    if (a.inStock != b.inStock) return a.inStock ? -1 : 1;
+    final byDate = b.newestSortKey.compareTo(a.newestSortKey);
+    if (byDate != 0) return byDate;
+    return b.id.compareTo(a.id);
+  });
+  if (sorted.length <= limit) return sorted;
   return sorted.sublist(0, limit);
 }
 
@@ -133,7 +139,13 @@ List<Product> guestPreviewProductList(List<Product> products, int limit) =>
     _newestProducts(products, limit);
 
 class ProductListScreen extends ConsumerStatefulWidget {
-  const ProductListScreen({super.key});
+  const ProductListScreen({
+    super.key,
+    this.newArrivalsOnly = false,
+  });
+
+  /// When true, shows the latest 20 single-SKU products (New Arrivals tab).
+  final bool newArrivalsOnly;
 
   @override
   ConsumerState<ProductListScreen> createState() => _ProductListScreenState();
@@ -149,6 +161,13 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     _searchController.text = ref.read(searchQueryProvider);
     ProductSyncService.instance.ensureCatalogLoaded().ignore();
     ProductSyncService.instance.addListener(_onSyncUpdate);
+    if (widget.newArrivalsOnly) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(sortOrderProvider.notifier).state = 'newest';
+      });
+      return;
+    }
     if (!AuthService.instance.isSignedIn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -164,6 +183,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
   void _onSyncUpdate() {
     if (!mounted) return;
+    if (widget.newArrivalsOnly) return;
     _maybeDefaultToNewArrivals();
   }
 
@@ -225,32 +245,58 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.view_week_outlined),
-          tooltip: 'Browse categories',
-          onPressed: () {
-            if (!AuthService.instance.isSignedIn) {
-              _requireSignIn(
-                context,
-                message: 'Sign in to browse categories and the full catalogue.',
-              );
-              return;
-            }
-            showCategoryPickerSheet(
-              context,
-              onSelected: (category) {
-                ref.read(selectedCategoryProvider.notifier).state =
-                    category == null
-                        ? null
-                        : SelectedCategory(
-                            id: category.id,
-                            name: category.name,
-                          );
-              },
-            );
-          },
-        ),
-        title: const AppBrandLogo(height: 34),
+        leading: widget.newArrivalsOnly
+            ? Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Icon(
+                  Icons.auto_awesome,
+                  color: Colors.amber.shade700,
+                ),
+              )
+            : IconButton(
+                icon: const Icon(Icons.view_week_outlined),
+                tooltip: 'Browse categories',
+                onPressed: () {
+                  if (!AuthService.instance.isSignedIn) {
+                    _requireSignIn(
+                      context,
+                      message:
+                          'Sign in to browse categories and the full catalogue.',
+                    );
+                    return;
+                  }
+                  showCategoryPickerSheet(
+                    context,
+                    onSelected: (category) {
+                      ref.read(selectedCategoryProvider.notifier).state =
+                          category == null
+                              ? null
+                              : SelectedCategory(
+                                  id: category.id,
+                                  name: category.name,
+                                );
+                    },
+                  );
+                },
+              ),
+        title: widget.newArrivalsOnly
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.local_fire_department,
+                      color: Colors.deepOrange.shade400, size: 26),
+                  const SizedBox(width: 6),
+                  Text(
+                    'New Arrivals',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.deepOrange.shade700,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ],
+              )
+            : const AppBrandLogo(height: 34),
         centerTitle: true,
         elevation: 0,
         actions: [
@@ -319,7 +365,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   onChanged: _onSearchChanged,
                 ),
                 const SizedBox(height: 8),
-                if (selectedCategory != null) ...[
+                if (!widget.newArrivalsOnly && selectedCategory != null) ...[
                   Row(
                     children: [
                       Expanded(
@@ -368,6 +414,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                       value: sortOrder,
                       isDense: true,
                       items: const [
+                        DropdownMenuItem(
+                            value: 'newest', child: Text('Newest first')),
                         DropdownMenuItem(
                             value: 'name_asc', child: Text('Name A–Z')),
                         DropdownMenuItem(
@@ -419,8 +467,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
               children: [
                 ref.watch(allProductsProvider).maybeWhen(
                   data: (_) {
-                    final count = ref.watch(filteredProductsProvider).length;
-                    return Text('$count products found',
+                    final count = _visibleProducts(ref).length;
+                    return Text(
+                        widget.newArrivalsOnly
+                            ? '$count new arrivals'
+                            : '$count products found',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Colors.grey.shade600,
                               fontWeight: FontWeight.bold,
@@ -448,7 +499,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     loading: () {
                       final sync = ProductSyncService.instance;
                       if (sync.initialBatchReady) {
-                        final partial = ref.watch(filteredProductsProvider);
+                        final partial = _visibleProducts(ref);
                         if (partial.isNotEmpty) {
                           return _buildProductResults(
                             context,
@@ -483,7 +534,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                       );
                     },
                     data: (_) {
-                      final filteredProducts = ref.watch(filteredProductsProvider);
+                      final filteredProducts = _visibleProducts(ref);
                       final sync = ProductSyncService.instance;
 
                       if (filteredProducts.isEmpty &&
@@ -505,7 +556,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                                         size: 64, color: Colors.grey[400]),
                                     const SizedBox(height: 16),
                                     Text(
-                                      'No products found',
+                                      widget.newArrivalsOnly
+                                          ? 'No new arrivals found'
+                                          : 'No products found',
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleLarge
@@ -538,39 +591,61 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     );
   }
 
+  List<Product> _visibleProducts(WidgetRef ref) {
+    if (!widget.newArrivalsOnly) {
+      return ref.watch(filteredProductsProvider);
+    }
+    final all = ref.watch(allProductsProvider).valueOrNull ?? const <Product>[];
+    var list = pickNewArrivals(all);
+    final q = ref.watch(searchQueryProvider).trim().toLowerCase();
+    if (q.isNotEmpty) {
+      list = list.where((p) => productMatchesSearchQuery(p, q)).toList();
+    }
+    if (ref.watch(lowStockOnlyProvider)) {
+      list = list.where((p) => p.isLowStock).toList();
+    }
+    return list;
+  }
+
   /// Sort products by [sortOrder] (role-aware price where applicable).
+  /// Out-of-stock products always sort after in-stock ones.
   static List<Product> _sortProducts(
     List<Product> products,
     String sortOrder,
     String? role,
   ) {
     final list = List<Product>.from(products);
-    switch (sortOrder) {
-      case 'name_asc':
-        list.sort((a, b) => a.name.compareTo(b.name));
-        break;
-      case 'name_desc':
-        list.sort((a, b) => b.name.compareTo(a.name));
-        break;
-      case 'price_asc':
-        list.sort((a, b) => a
-            .displayCurrentPriceForRole(role)
-            .compareTo(b.displayCurrentPriceForRole(role)));
-        break;
-      case 'price_desc':
-        list.sort((a, b) => b
-            .displayCurrentPriceForRole(role)
-            .compareTo(a.displayCurrentPriceForRole(role)));
-        break;
-      case 'stock_asc':
-        list.sort((a, b) => a.stockSortKey.compareTo(b.stockSortKey));
-        break;
-      case 'stock_desc':
-        list.sort((a, b) => b.stockSortKey.compareTo(a.stockSortKey));
-        break;
-      default:
-        list.sort((a, b) => a.name.compareTo(b.name));
+    int cmpPrimary(Product a, Product b) {
+      switch (sortOrder) {
+        case 'newest':
+          final byDate = b.newestSortKey.compareTo(a.newestSortKey);
+          if (byDate != 0) return byDate;
+          return b.id.compareTo(a.id);
+        case 'name_asc':
+          return a.name.compareTo(b.name);
+        case 'name_desc':
+          return b.name.compareTo(a.name);
+        case 'price_asc':
+          return a
+              .displayCurrentPriceForRole(role)
+              .compareTo(b.displayCurrentPriceForRole(role));
+        case 'price_desc':
+          return b
+              .displayCurrentPriceForRole(role)
+              .compareTo(a.displayCurrentPriceForRole(role));
+        case 'stock_asc':
+          return a.stockSortKey.compareTo(b.stockSortKey);
+        case 'stock_desc':
+          return b.stockSortKey.compareTo(a.stockSortKey);
+        default:
+          return a.name.compareTo(b.name);
+      }
     }
+
+    list.sort((a, b) {
+      if (a.inStock != b.inStock) return a.inStock ? -1 : 1;
+      return cmpPrimary(a, b);
+    });
     return list;
   }
 

@@ -50,6 +50,7 @@ class ProductRepository {
             color: remoteProduct.color,
             weight: remoteProduct.weight,
             dimensions: remoteProduct.dimensions,
+            dateCreated: remoteProduct.dateCreated ?? localProduct.dateCreated,
           );
         }
         return remoteProduct;

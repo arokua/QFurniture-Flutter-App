@@ -242,6 +242,27 @@ function qtoys_rest_stamp_order_account_type($order, $request, $creating) {
     }
 
     /*
+     * Every app order lands as on-hold so it is reviewed before fulfilment.
+     *
+     * Forced here rather than sent by the client so an older app build cannot
+     * bypass it. Filterable so the status can be changed without editing this
+     * file:
+     *
+     *   add_filter('qtoys_app_order_status', fn() => 'pending');
+     *
+     * Consequences worth knowing, all of them WooCommerce defaults:
+     *  - on-hold REDUCES STOCK, so inventory is committed at submission.
+     *  - on-hold sends the customer the "Order on-hold" email, whose stock
+     *    wording is about awaiting payment. Review that template.
+     *  - on-hold is excluded from net-sales analytics until someone advances
+     *    the order, so revenue reports read empty until then.
+     */
+    $app_status = apply_filters('qtoys_app_order_status', 'on-hold');
+    if (is_string($app_status) && $app_status !== '') {
+        $order->set_status($app_status);
+    }
+
+    /*
      * Order attribution — the "Origin" column in Orders and Analytics
      * (WooCommerce 8.5+).
      *

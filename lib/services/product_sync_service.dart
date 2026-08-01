@@ -194,9 +194,18 @@ class ProductSyncService extends ChangeNotifier {
   }
 
   static int _modifiedMs(Map<String, dynamic> p) {
+    final created = p['dateCreated']?.toString() ??
+        p['date_created_gmt']?.toString() ??
+        p['date_created']?.toString() ??
+        '';
+    final createdParsed = DateTime.tryParse(created);
+    if (createdParsed != null) return createdParsed.millisecondsSinceEpoch;
     final raw = p['modified']?.toString() ?? '';
     final parsed = DateTime.tryParse(raw);
-    return parsed?.millisecondsSinceEpoch ?? 0;
+    if (parsed != null) return parsed.millisecondsSinceEpoch;
+    final id = p['id'];
+    if (id is int) return id;
+    return int.tryParse(id?.toString() ?? '') ?? 0;
   }
 
   // ── Phased sync ─────────────────────────────────────────────────────────────
@@ -419,6 +428,7 @@ class ProductSyncService extends ChangeNotifier {
     setIfDifferent('inStock', remote['inStock']);
     setIfDifferent('stockAmount', remote['stockAmount']);
     setIfDifferent('modified', remote['modified']);
+    setIfDifferent('dateCreated', remote['dateCreated']);
     setIfDifferent('currency', remote['currency']);
 
     final oldImages = _imageUrlList(local['images']);
@@ -665,6 +675,7 @@ class ProductSyncService extends ChangeNotifier {
       'dimensions': _formatDimensions(p['dimensions']),
       'variants': p['variations'] ?? [],
       'modified': p['date_modified_gmt'],
+      'dateCreated': p['date_created_gmt'] ?? p['date_created'],
     };
   }
 

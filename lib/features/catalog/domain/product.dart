@@ -124,6 +124,9 @@ class Product {
   final String? weight;
   final String? dimensions;
 
+  /// Publish / post date from WooCommerce (`date_created_gmt`).
+  final DateTime? dateCreated;
+
   const Product({
     required this.id,
     required this.name,
@@ -149,6 +152,7 @@ class Product {
     this.color,
     this.weight,
     this.dimensions,
+    this.dateCreated,
   });
 
   factory Product.fromJson(Map<String, dynamic> j) {
@@ -309,6 +313,8 @@ class Product {
         ? decodeHtmlEntities(permalinkVal!)
         : null;
 
+    final dateCreated = _parseDateCreated(j);
+
     final built = Product(
       id: id,
       name: decodeHtmlEntities(j['name'] as String? ?? ''),
@@ -350,8 +356,18 @@ class Product {
       dimensions: (j['dimensions'] as String? ?? '').trim().isEmpty
           ? null
           : (j['dimensions'] as String? ?? '').trim(),
+      dateCreated: dateCreated,
     );
     return _applyBackupPricingIfApplicable(built);
+  }
+
+  static DateTime? _parseDateCreated(Map<String, dynamic> j) {
+    final raw = j['dateCreated'] ??
+        j['date_created'] ??
+        j['date_created_gmt'] ??
+        j['created'];
+    if (raw == null) return null;
+    return DateTime.tryParse(raw.toString());
   }
 
   /// First main category (Homewares, Children's Furniture, Outdoor Furniture) that appears in this product, or first category, or "Other".
@@ -386,6 +402,31 @@ class Product {
   }
 
   int get imageCount => images.isNotEmpty ? images.length : (primaryImage.isNotEmpty ? 1 : 0);
+
+  /// Newer-first sort key: publish date, else product id (Woo ids grow over time).
+  int get newestSortKey =>
+      dateCreated?.millisecondsSinceEpoch ?? id;
+
+  /// Bundle / multi-item packages — excluded from New Arrivals (single-SKU only).
+  bool get isBundleOrPackage {
+    for (final c in categoryList) {
+      final l = c.toLowerCase();
+      if (l.contains('bundle') ||
+          l.contains('packages') ||
+          l.contains('value educational package') ||
+          l.contains('wholesale package')) {
+        return true;
+      }
+    }
+    final n = name.toLowerCase();
+    if (n.contains(' bundle') ||
+        n.endsWith('bundle') ||
+        n.contains('wholesale package') ||
+        n.contains('foundation package')) {
+      return true;
+    }
+    return false;
+  }
 
   int? get parsedStockQuantityApprox {
     if (!inStock) return 0;
@@ -463,5 +504,6 @@ Product _applyBackupPricingIfApplicable(Product p) {
     color: p.color,
     weight: p.weight,
     dimensions: p.dimensions,
+    dateCreated: p.dateCreated,
   );
 }
