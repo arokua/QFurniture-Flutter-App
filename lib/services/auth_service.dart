@@ -390,6 +390,31 @@ class AuthService extends ChangeNotifier {
   /// Drops the validation throttle so the next call re-checks the server.
   void invalidateSessionValidation() => _lastValidatedAt = null;
 
+  /// Signs the user in immediately after a successful password reset.
+  ///
+  /// Reuses the normal login path with the new credentials rather than
+  /// hand-building a session from the reset token: role resolution, customer
+  /// id lookup and refresh-cookie capture all live there, and duplicating any
+  /// of it would let a reset-issued session drift from a login-issued one.
+  /// The token the endpoint returns is therefore a fallback, used only if that
+  /// login cannot complete.
+  Future<bool> adoptResetSession({
+    required String email,
+    required String token,
+    required String password,
+  }) async {
+    final result = await signIn(email: email, password: password);
+    if (result.isSuccess) {
+      _lastValidatedAt = DateTime.now();
+      return true;
+    }
+    if (token.isEmpty) return false;
+
+    await _prefs?.setString(_tokenKey, token);
+    _lastValidatedAt = null;
+    return isSignedIn;
+  }
+
   /// Keeps the stored credentials in step after an in-app password change.
   ///
   /// Those credentials back the silent re-login in [ensureValidSession]. Left

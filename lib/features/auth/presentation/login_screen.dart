@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../app_router.dart';
 import '../../../config/store_cart_api_service.dart';
-import '../../../config/store_link_service.dart';
 import '../../../features/cart/data/cart_provider.dart';
+import 'forgot_password_screen.dart';
 import 'widgets/password_field.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/order_history_sync_service.dart';
@@ -31,22 +31,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
-  /// Opens WooCommerce's password-reset page in the system browser.
+  /// Opens the native reset flow. No browser, no WebView.
   ///
-  /// Interim: a fully native reset needs `qtoys/v1/password-reset/*` endpoints
-  /// that do not exist server-side yet (see localDocs/deferred-backlog.txt B7).
-  /// This at least gives a locked-out user a working route — the previous link
-  /// pointed at `edit-account`, which just bounced them back to sign-in.
+  /// Carries whatever the user has already typed into the email box so they
+  /// do not retype it.
   Future<void> _handleForgotPassword() async {
-    final ok = await StoreLinkService.openPasswordReset();
-    if (!mounted || ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          "We couldn't open the reset page. Please try again in a moment.",
-        ),
-      ),
+    final signedIn = await ForgotPasswordScreen.push(
+      context,
+      initialEmail: _emailController.text.trim(),
     );
+    if (!mounted || signedIn != true) return;
+    // The reset signed them in; leave the login screen behind them.
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
   Future<void> _handleLogin() async {
