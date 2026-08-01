@@ -439,25 +439,25 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   ),
                 ),
               ),
-            if (!priceHidden && p.inStock) ...[
-              const SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: () {
-                  final url = p.permalink;
-                  final raw = url?.trim();
-                  final absoluteUrl = (raw != null && raw.isNotEmpty)
-                      ? (raw.startsWith('/') ? '${kStoreBaseUrl}$raw' : raw)
-                      : storeProductUrl(p.id);
-                  StoreWebViewScreen.push(
-                    context,
-                    absoluteUrl,
-                    attemptWebLogin: true,
-                  );
-                },
-                icon: const Icon(Icons.open_in_browser, size: 20),
-                label: const Text('Open on website'),
-              ),
-            ],
+            // if (!priceHidden && p.inStock) ...[
+            //   const SizedBox(height: 8),
+            //   TextButton.icon(
+            //     onPressed: () {
+            //       final url = p.permalink;
+            //       final raw = url?.trim();
+            //       final absoluteUrl = (raw != null && raw.isNotEmpty)
+            //           ? (raw.startsWith('/') ? '${kStoreBaseUrl}$raw' : raw)
+            //           : storeProductUrl(p.id);
+            //       StoreWebViewScreen.push(
+            //         context,
+            //         absoluteUrl,
+            //         attemptWebLogin: true,
+            //       );
+            //     },
+            //     icon: const Icon(Icons.open_in_browser, size: 20),
+            //     label: const Text('Open on website'),
+            //   ),
+            // ],
           ],
         ),
         const SizedBox(height: 24),
