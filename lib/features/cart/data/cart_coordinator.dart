@@ -294,12 +294,19 @@ class CartCoordinator {
       });
 
   /// Switches to another user's document (login, logout, account change).
+  ///
+  /// [_userKey] must stay cheap and local: this runs on the same serial chain
+  /// as every mutation, so any network work here stalls the whole cart.
   Future<void> onUserChanged() => _enqueue(() async {
         final key = await _userKey();
         if (key == _doc.userKey) return;
         _doc = await _store.read(key);
         _releaseLeakedHold();
         _emit();
+        // The freshly loaded document may carry queued mutations from a
+        // previous session. Nothing else would wake them until the user's next
+        // gesture or the heartbeat, which is why a sign-in appeared to hang.
+        if (_doc.hasPendingWork) _schedulePump();
       });
 
   // ---------------------------------------------------------------- reconcile

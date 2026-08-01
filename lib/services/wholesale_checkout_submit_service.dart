@@ -1,17 +1,21 @@
 import 'dart:async';
 
-import '../features/cart/data/cart_providers.dart';
-
 import '../features/cart/data/store_cart_snapshot.dart';
 import '../features/cart/domain/role_cart_pricing.dart';
+import '../features/checkout/data/checkout_providers.dart';
+import '../features/checkout/domain/checkout_attempt.dart';
 import '../features/orders/domain/woo_order_summary.dart';
 import '../navigation/checkout_feedback.dart';
 import 'auth_service.dart';
-import 'order_history_sync_service.dart';
 import 'woo_commerce_rest_api.dart';
-import '../config/store_cart_api_service.dart';
 
 /// Posts native checkout orders after the UI has already returned home.
+///
+/// Every step is ordered around one rule: **the cart is cleared only against a
+/// real WooCommerce order id.** The attempt record is persisted in
+/// [CheckoutAttemptState.dispatched] before the POST leaves, so if the process
+/// dies at any point the next launch can tell whether an order might exist and
+/// resolve it by lookup rather than by resubmitting.
 class WholesaleCheckoutSubmitService {
   WholesaleCheckoutSubmitService._();
 
@@ -19,14 +23,20 @@ class WholesaleCheckoutSubmitService {
       WholesaleCheckoutSubmitService._();
 
   bool _submitInFlight = false;
-  String? _lastClientOrderKey;
-  DateTime? _lastSubmitAt;
 
   /// True while a background POST is running (UI can avoid re-submit).
   bool get isSubmitting => _submitInFlight;
 
+  /// Submits [attempt], which must already be persisted in
+  /// [CheckoutAttemptState.preparing] by [CheckoutAttemptCoordinator.begin].
+  ///
+  /// Taking the attempt as a parameter — rather than minting a key here — is
+  /// what makes the client order key stable across retries and restarts. The
+  /// previous implementation derived it from a 2-second time bucket, so a
+  /// retry produced a different key and the dedupe silently stopped working.
   Future<void> submitInBackground({
     required String jwt,
+    required CheckoutAttempt attempt,
     int? customerId,
     required StoreCartApiSnapshot snapshot,
     required List<({int productId, int quantity})> lines,
@@ -34,40 +44,20 @@ class WholesaleCheckoutSubmitService {
     required String paymentMethodTitle,
     required String accountType,
     required List<Map<String, String>> orderMeta,
-    String? clientOrderKey,
   }) async {
-    final key = clientOrderKey ??
-        '${lines.map((e) => '${e.productId}x${e.quantity}').join('|')}_'
-            '${DateTime.now().millisecondsSinceEpoch ~/ 2000}';
-
-    // Deduplicate rapid double-taps / rebuild re-entry within 8s.
-    final now = DateTime.now();
     if (_submitInFlight) return;
-    if (_lastClientOrderKey == key &&
-        _lastSubmitAt != null &&
-        now.difference(_lastSubmitAt!) < const Duration(seconds: 8)) {
-      return;
-    }
-
     _submitInFlight = true;
-    _lastClientOrderKey = key;
-    _lastSubmitAt = now;
 
-    String pendingRef = '';
+    final coordinator = checkoutCoordinator;
     try {
-      // Clear server cart immediately so background cart sync cannot
-      // rehydrate items and enable a duplicate place-order.
-      await Future.wait([
-        StoreCartApiService.instance.clearCart(),
-        cartCoordinator.markEmptySynced(),
-      ]);
-
       var resolvedCustomerId = customerId;
       resolvedCustomerId ??=
           await AuthService.instance.ensureCustomerIdForCurrentSession();
       if (resolvedCustomerId == null) {
+        // Nothing was sent, so the basket is handed straight back.
+        await coordinator.abandon(attempt.attemptId);
         showCheckoutFeedbackSnackBar(
-          'Sign in again to place your order.',
+          'Sign in again to place your order. Your cart is still here.',
         );
         return;
       }
@@ -83,19 +73,33 @@ class WholesaleCheckoutSubmitService {
             ),
           )
           .toList();
-      pendingRef = await OrderHistorySyncService.instance
-          .writeThroughPendingOrder(
-        number: '…',
+
+      final localRef = await const OrderHistoryCheckoutBridge().writePending(
         total: totalDisplay.replaceAll(RegExp(r'[^\d.]'), ''),
         lineItems: pendingLines,
       );
+
+      // Persist `dispatched` BEFORE the request goes out. This single ordering
+      // is what makes a crash attributable instead of a guess.
+      final dispatched = await coordinator.markDispatched(
+        attempt.attemptId,
+        localRef: localRef,
+      );
+      if (dispatched == null) {
+        // The record was settled or replaced underneath us (e.g. a reconcile
+        // already confirmed it). Do not send a second order.
+        return;
+      }
 
       final billingEmail = await AuthService.instance.resolvedAccountEmail();
       final roleLinePrices = RoleCartPricing.fromSnapshotLines(snapshot.lines);
 
       final metaWithClientKey = <Map<String, String>>[
         ...orderMeta,
-        {'key': 'qtoys_client_order_key', 'value': key},
+        {
+          'key': WooCommerceRestApi.clientOrderKeyMeta,
+          'value': attempt.clientOrderKey,
+        },
       ];
 
       final result = await WooCommerceRestApi.instance.createWholesaleOrder(
@@ -110,41 +114,45 @@ class WholesaleCheckoutSubmitService {
         roleLinePrices: roleLinePrices,
       );
 
-      if (result.order == null) {
-        if (pendingRef.isNotEmpty) {
-          await OrderHistorySyncService.instance.failPendingOrder(
-            localRef: pendingRef,
-            error: result.error ?? 'Could not create order.',
-          );
-        }
+      final order = result.order;
+      if (order != null && order.id > 0) {
+        await coordinator.markConfirmed(attempt.attemptId, order: order);
+        showCheckoutFeedbackSnackBar('Order #${order.number} placed.');
+        return;
+      }
+
+      if (result.ambiguous) {
+        // The order may exist. Keep the basket, keep the record, and let
+        // reconciliation settle it. Never resubmit.
+        await coordinator.markUnknown(
+          attempt.attemptId,
+          error: result.error ?? 'Could not confirm the order.',
+        );
         showCheckoutFeedbackSnackBar(
-          result.error ?? 'Could not create order. Check order history.',
+          "We couldn't confirm your order yet. "
+          "We'll check again shortly — your cart is safe.",
         );
         return;
       }
 
-      if (pendingRef.isNotEmpty) {
-        await OrderHistorySyncService.instance.resolvePendingOrder(
-          localRef: pendingRef,
-          order: result.order!,
-        );
-      } else {
-        await OrderHistorySyncService.instance.writeThroughOrder(result.order!);
-      }
-
-      // Ensure store + local cart stay empty after success.
-      unawaited(StoreCartApiService.instance.clearCart());
-      unawaited(cartCoordinator.markEmptySynced());
-      OrderHistorySyncService.instance.syncNow(force: true).ignore();
-    } catch (e, st) {
-      if (pendingRef.isNotEmpty) {
-        await OrderHistorySyncService.instance.failPendingOrder(
-          localRef: pendingRef,
-          error: 'Order could not be submitted.',
-        );
-      }
+      await coordinator.markFailed(
+        attempt.attemptId,
+        error: result.error ?? 'Could not create order.',
+      );
       showCheckoutFeedbackSnackBar(
-        'Order could not be submitted. Check order history.',
+        "Your order didn't go through. "
+        'Your cart is still here so you can try again.',
+      );
+    } catch (e, st) {
+      // An exception here is ambiguous by definition: we do not know how far
+      // the request got, so the cart must survive.
+      await coordinator.markUnknown(
+        attempt.attemptId,
+        error: 'Order submission was interrupted.',
+      );
+      showCheckoutFeedbackSnackBar(
+        "We couldn't confirm your order yet. "
+        "We'll check again shortly — your cart is safe.",
       );
       assert(() {
         // ignore: avoid_print

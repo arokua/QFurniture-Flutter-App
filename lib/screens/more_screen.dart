@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app_router.dart';
-import '../config/store_link_service.dart';
+import '../features/auth/presentation/change_password_screen.dart';
 import '../services/auth_service.dart';
 
 String _accountRoleLabel(String role) {
@@ -181,15 +181,15 @@ class MoreScreen extends StatelessWidget {
           //     );
           //   },
           // ),
-          ListTile(
-            leading: const Icon(Icons.lock_reset_outlined),
-            title: const Text('Reset password'),
-            trailing: const Icon(Icons.open_in_new),
-            // Opens the storefront reset page in the system browser rather
-            // than a WebView with an injected session — a password reset must
-            // not run inside an already-authenticated web session.
-            onTap: () => StoreLinkService.openPasswordReset(),
-          ),
+          if (session != null)
+            ListTile(
+              leading: const Icon(Icons.lock_reset_outlined),
+              title: const Text('Change password'),
+              trailing: const Icon(Icons.chevron_right),
+              // Fully in-app. This used to hand off to the storefront in the
+              // system browser, which the client did not want.
+              onTap: () => ChangePasswordScreen.push(context),
+            ),
           if (session != null)
             ListTile(
               leading: const Icon(Icons.receipt_long_outlined),

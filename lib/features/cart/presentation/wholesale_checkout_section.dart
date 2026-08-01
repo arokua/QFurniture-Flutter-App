@@ -4,13 +4,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../config/checkout_engine_config.dart';
 import '../../../navigation/checkout_feedback.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/wholesale_checkout_submit_service.dart';
 import '../../../utils/money_format.dart';
-import '../data/cart_provider.dart';
+import '../../checkout/data/checkout_providers.dart';
+import '../../checkout/domain/checkout_attempt.dart';
 import '../data/store_cart_snapshot.dart';
-import '../data/woo_cart_provider.dart';
 import '../../../navigation/post_checkout_navigation.dart';
 import '../../orders/presentation/order_history_notifier.dart';
 
@@ -103,23 +104,58 @@ class _WholesaleCheckoutSectionState
         ? (method: 'bacs', title: 'Bank Deposit')
         : (method: 'cod', title: 'Credit card (phone)');
 
-    // Empty local cart + disk immediately (before navigate / background POST).
-    ref.read(cartProvider.notifier).clear();
-    await cartCoordinator.markEmptySynced();
-    ref.invalidate(wooCartProvider);
-    ref.invalidate(orderHistoryProvider);
-
-    if (!mounted) return;
-    Navigator.of(context).pop();
-    PostCheckoutNavigation.go();
-
-    showCheckoutFeedbackSnackBar(
-      'Order sent — we\'re processing it in the background.',
+    // Checkout barrier: settle queued cart mutations so the server-side cart
+    // matches what the user is looking at. Deliberately non-blocking — the
+    // order is POSTed with explicit line_items built from this snapshot, so an
+    // unsettled sync cannot change what gets ordered. The outcome is recorded
+    // on the attempt for diagnostics.
+    final drainSettled = await cartCoordinator.drainForCheckout(
+      timeout: CheckoutEngineConfig.drainTimeout,
     );
+
+    // Persist the attempt and freeze the cart BEFORE anything is sent. The
+    // cart is deliberately NOT emptied here: it is cleared only once a real
+    // WooCommerce order id comes back, so a failed order can never lose it.
+    final attempt = await checkoutCoordinator.begin(
+      lines: [
+        for (final l in widget.snapshot.lines)
+          if (l.productId > 0 && l.quantity > 0)
+            CheckoutAttemptLine(
+              productId: l.productId,
+              quantity: l.quantity,
+              name: l.name,
+            ),
+      ],
+      totalDisplay: widget.snapshot.totalsView.formattedTotal,
+      drainSettled: drainSettled,
+    );
+
+    if (attempt == null) {
+      // Another attempt is still outstanding — the persisted duplicate guard.
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("We're still finishing your last order."),
+        ),
+      );
+      return;
+    }
+
+    // The sheet may already be gone; the order must still go out, so only the
+    // UI touches are guarded, never the submission below.
+    if (mounted) {
+      ref.invalidate(orderHistoryProvider);
+      Navigator.of(context).pop();
+      PostCheckoutNavigation.go();
+    }
+
+    showCheckoutFeedbackSnackBar('Placing your order…');
 
     unawaited(
       WholesaleCheckoutSubmitService.instance.submitInBackground(
         jwt: token,
+        attempt: attempt,
         customerId: session?.customerId,
         snapshot: widget.snapshot,
         lines: lines,

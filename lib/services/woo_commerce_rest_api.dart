@@ -8,6 +8,7 @@ import '../config/store_config.dart';
 import '../features/cart/data/store_cart_snapshot.dart';
 import '../features/cart/domain/role_cart_pricing.dart';
 import '../features/orders/domain/woo_order_summary.dart';
+import '../utils/user_facing_errors.dart';
 
 /// WooCommerce REST API (`/wp-json/wc/v3/...`) with Basic-auth + JWT fallbacks.
 class WooCommerceRestApi {
@@ -119,6 +120,58 @@ class WooCommerceRestApi {
       }
     }
     return res;
+  }
+
+  /// Sets a new password on the signed-in customer's WooCommerce account.
+  ///
+  /// Used by the in-app change-password screen, which replaced a link out to
+  /// the storefront. Returns null on success, or a message safe to show.
+  ///
+  /// The password is sent only in the request body, never in a URL or a log
+  /// line — the debug output below deliberately prints the status code alone.
+  Future<String?> changeCustomerPassword({
+    required String jwt,
+    required int customerId,
+    required String newPassword,
+  }) async {
+    if (customerId <= 0) return 'We could not identify your account.';
+
+    final uri = Uri.parse('$_v3Base/customers/$customerId');
+    final encoded = jsonEncode({'password': newPassword});
+
+    try {
+      var res = await http
+          .put(uri, headers: _jsonPostHeaders(jwt), body: encoded)
+          .timeout(const Duration(seconds: 30));
+
+      // Fall back to key auth only if the user's own token was refused, so a
+      // successful user-scoped write is always preferred.
+      if (res.statusCode != 200 && _basicAuthHeader != null) {
+        res = await http
+            .put(
+              uri,
+              headers: {..._basicHeaders(), 'Content-Type': 'application/json'},
+              body: encoded,
+            )
+            .timeout(const Duration(seconds: 30));
+      }
+
+      if (kDebugMode) {
+        debugPrint('[WooRest] change password → ${res.statusCode}');
+      }
+      if (res.statusCode == 200) return null;
+
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map && decoded['message'] != null) {
+          return sanitizeAuthApiMessage(decoded['message'].toString());
+        }
+      } catch (_) {}
+      return 'We could not update your password just now.';
+    } catch (e) {
+      if (kDebugMode) debugPrint('[WooRest] change password error: $e');
+      return "We couldn't reach the store. Check your connection and try again.";
+    }
   }
 
   List<WooOrderSummary> _parseOrderList(dynamic decoded) {
@@ -330,8 +383,102 @@ class WooCommerceRestApi {
     return o;
   }
 
+  /// Meta key stamped on every app-created order, used to recognise an order
+  /// this device submitted when the response to the POST was never seen.
+  static const String clientOrderKeyMeta = 'qtoys_client_order_key';
+
+  /// Finds an order previously submitted with [clientOrderKey].
+  ///
+  /// [reachedServer] separates "looked and it is not there" from "could not
+  /// look". Collapsing those two would be a data-loss bug: a network failure
+  /// during reconciliation would be read as "the order never landed", and the
+  /// attempt would be declared failed while the order actually exists.
+  ///
+  /// The match is done client-side on `meta_data` on purpose. WooCommerce's
+  /// `search` parameter runs through `wc_order_search`, which does not index
+  /// arbitrary post meta, so querying by this key would silently return
+  /// nothing even when the order is there.
+  Future<({WooOrderSummary? order, bool reachedServer})>
+      findOrderByClientOrderKey({
+    required String jwt,
+    required int customerId,
+    required String clientOrderKey,
+    int perPage = 20,
+  }) async {
+    if (clientOrderKey.isEmpty || customerId <= 0) {
+      return (order: null, reachedServer: false);
+    }
+
+    try {
+      final res = await _getV3(
+        '/orders',
+        query: {
+          'customer': '$customerId',
+          'per_page': '$perPage',
+          'orderby': 'date',
+          'order': 'desc',
+          'status': 'any',
+        },
+        jwt: jwt,
+      );
+      if (res.statusCode != 200) {
+        if (kDebugMode) {
+          debugPrint(
+            '[WooRest] findOrderByClientOrderKey http ${res.statusCode}',
+          );
+        }
+        return (order: null, reachedServer: false);
+      }
+
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List) return (order: null, reachedServer: false);
+
+      for (final raw in decoded) {
+        if (raw is! Map<String, dynamic>) continue;
+        if (!orderCarriesClientKey(raw, clientOrderKey)) continue;
+        if (kDebugMode) {
+          debugPrint(
+            '[WooRest] reconciled order ${raw['id']} for key $clientOrderKey',
+          );
+        }
+        return (order: WooOrderSummary.fromJson(raw), reachedServer: true);
+      }
+
+      // The listing was read successfully and the key is not in it.
+      return (order: null, reachedServer: true);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[WooRest] findOrderByClientOrderKey error: $e');
+      }
+      return (order: null, reachedServer: false);
+    }
+  }
+
+  /// True when a raw wc/v3 order body carries [key] as its client order key.
+  ///
+  /// Public so the matching rule that reconciliation depends on can be tested
+  /// directly, without standing up an HTTP fake.
+  static bool orderCarriesClientKey(Map<String, dynamic> order, String key) {
+    if (key.isEmpty) return false;
+    final meta = order['meta_data'];
+    if (meta is! List) return false;
+    for (final m in meta) {
+      if (m is! Map) continue;
+      if (m['key']?.toString() != clientOrderKeyMeta) continue;
+      if (m['value']?.toString() == key) return true;
+    }
+    return false;
+  }
+
   /// Creates a pending wholesale order (bank deposit / phone credit card).
-  Future<({WooOrderSummary? order, String? error})> createWholesaleOrder({
+  ///
+  /// [ambiguous] means the request may have created an order even though no
+  /// order came back — a timeout, a socket error, a 5xx, or a success status
+  /// whose body could not be parsed. Callers must not treat those as failure:
+  /// the order has to be resolved by looking it up with its client order key,
+  /// never by resubmitting, or a customer can be billed twice.
+  Future<({WooOrderSummary? order, String? error, bool ambiguous})>
+      createWholesaleOrder({
     required String jwt,
     required int customerId,
     required List<({int productId, int quantity})> lineItems,
@@ -343,7 +490,7 @@ class WooCommerceRestApi {
     List<RoleOrderLinePrice>? roleLinePrices,
   }) async {
     if (lineItems.isEmpty) {
-      return (order: null, error: 'Cart is empty.');
+      return (order: null, error: 'Cart is empty.', ambiguous: false);
     }
 
     final rolePriceById = <int, RoleOrderLinePrice>{
@@ -414,27 +561,55 @@ class WooCommerceRestApi {
             msg = decoded['message'].toString();
           }
         } catch (_) {}
+        // A 4xx is WooCommerce refusing the order outright, so nothing was
+        // written. A 5xx/408/429 may have created the order before failing to
+        // answer, so it is ambiguous and must be reconciled, not retried.
+        final ambiguous = res.statusCode >= 500 ||
+            res.statusCode == 408 ||
+            res.statusCode == 429;
         if (kDebugMode) {
-          debugPrint('[WooRest] createWholesaleOrder failed: $msg');
+          debugPrint(
+            '[WooRest] createWholesaleOrder failed (${res.statusCode}, '
+            'ambiguous=$ambiguous): $msg',
+          );
         }
-        return (order: null, error: msg);
+        return (order: null, error: msg, ambiguous: ambiguous);
       }
 
       final decoded = jsonDecode(res.body);
       if (decoded is! Map<String, dynamic>) {
-        return (order: null, error: 'Unexpected response from store.');
+        // The store accepted the request; we simply cannot read the answer.
+        // The order very likely exists.
+        return (
+          order: null,
+          error: 'Unexpected response from store.',
+          ambiguous: true,
+        );
       }
       final order = WooOrderSummary.fromJson(decoded);
+      if (order.id <= 0) {
+        return (
+          order: null,
+          error: 'Store did not return an order id.',
+          ambiguous: true,
+        );
+      }
       if (kDebugMode) {
         debugPrint(
           '[WooRest] order created id=${order.id} number=${order.number} '
           'customer=${order.customerId}',
         );
       }
-      return (order: order, error: null);
+      return (order: order, error: null, ambiguous: false);
     } catch (e, st) {
       if (kDebugMode) debugPrint('[WooRest] createWholesaleOrder error: $e\n$st');
-      return (order: null, error: 'Network error creating order.');
+      // The request may well have reached WooCommerce before the connection
+      // broke, so this is the canonical ambiguous case.
+      return (
+        order: null,
+        error: 'Network error creating order.',
+        ambiguous: true,
+      );
     }
   }
 }

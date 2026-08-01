@@ -35,10 +35,20 @@ class OrderHistorySyncService {
     _periodic = null;
   }
 
+  /// Stable identity for the signed-in user's caches.
+  ///
+  /// Deliberately does **no** network work. The cart coordinator resolves this
+  /// inside its serial op chain, so awaiting `ensureValidSession()` here parked
+  /// every cart mutation behind a 12–15s token round trip — and, when that call
+  /// failed, flipped the key to `guest` and swapped the cart document out from
+  /// under the user. Callers that genuinely need a fresh token (like [syncNow])
+  /// validate on their own.
+  ///
+  /// The JWT payload decode below is local and keeps working on an expired
+  /// token, which is what makes the key stable rather than flapping.
   Future<String?> currentUserKey() async {
     final auth = AuthService.instance;
     if (!auth.isSignedIn) return null;
-    await auth.ensureValidSession();
     final session = auth.currentSession;
     if (session == null) return null;
 

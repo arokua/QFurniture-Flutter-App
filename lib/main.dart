@@ -6,6 +6,7 @@ import 'app_router.dart';
 import 'config/store_cart_api_service.dart';
 import 'features/cart/data/cart_providers.dart';
 import 'features/cart/data/cart_remote_sync_binding.dart';
+import 'features/checkout/data/checkout_providers.dart';
 import 'services/product_sync_service.dart';
 import 'services/product_image_cache_service.dart';
 import 'services/web_auth_cookie_store.dart';
@@ -38,6 +39,12 @@ void main() async {
   // Single-writer cart engine. Started after auth so it resolves the right
   // user key, and after CartSyncService.init so the cache directory exists.
   await initCartCoordinator();
+
+  // Settle any order that was submitted but never confirmed — the app being
+  // killed mid-POST is exactly the case this exists for. Not awaited: startup
+  // must never block on the network, and until it resolves the cart is simply
+  // left intact, which is the safe state.
+  reconcileCheckoutAttempt().ignore();
 
   await ProductImageCacheService.instance.init();
 

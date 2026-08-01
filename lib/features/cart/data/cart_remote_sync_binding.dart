@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../config/local_first_sync_config.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/order_history_sync_service.dart';
+import '../../checkout/data/checkout_providers.dart';
 import 'cart_coordinator.dart';
 import 'cart_providers.dart';
 
@@ -49,6 +50,7 @@ class _CartRemoteSyncBindingState extends ConsumerState<CartRemoteSyncBinding>
       if (!AuthService.instance.isSignedIn) return;
       cartCoordinator.reconcile(reason: ReconcileReason.manual).ignore();
       OrderHistorySyncService.instance.syncNow().ignore();
+      _reconcileCheckout();
     });
   }
 
@@ -60,6 +62,15 @@ class _CartRemoteSyncBindingState extends ConsumerState<CartRemoteSyncBinding>
         .reconcile(force: true, reason: ReconcileReason.appResume)
         .ignore();
     OrderHistorySyncService.instance.syncNow().ignore();
+    _reconcileCheckout();
+  }
+
+  /// Settles any order that was submitted but never confirmed — the common
+  /// case being the app backgrounded or killed mid-POST. Runs on resume as
+  /// well as on the heartbeat because that is exactly when a previously
+  /// unreachable server tends to become reachable again.
+  void _reconcileCheckout() {
+    unawaited(reconcileCheckoutAttempt());
   }
 
   @override

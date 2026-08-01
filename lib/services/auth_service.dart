@@ -251,6 +251,7 @@ class AuthService extends ChangeNotifier {
 
   /// Sign out (clears real session and guest browse).
   Future<void> signOut() async {
+    _lastValidatedAt = null;
     await _prefs?.remove(_emailKey);
     await _prefs?.remove(_nameKey);
     await _prefs?.remove(_roleKey);
@@ -375,6 +376,36 @@ class AuthService extends ChangeNotifier {
 
   bool _ensureSessionInFlight = false;
 
+  /// When the token was last positively validated.
+  DateTime? _lastValidatedAt;
+
+  /// How long a successful validation is trusted before re-checking.
+  ///
+  /// The cart gateway calls [ensureValidSession] on every reconcile, which
+  /// after the coordinator refactor means after every mutation batch and on
+  /// every heartbeat. Without this the app issued a blocking token round trip
+  /// for each of them.
+  static const Duration _revalidateAfter = Duration(minutes: 10);
+
+  /// Drops the validation throttle so the next call re-checks the server.
+  void invalidateSessionValidation() => _lastValidatedAt = null;
+
+  /// Keeps the stored credentials in step after an in-app password change.
+  ///
+  /// Those credentials back the silent re-login in [ensureValidSession]. Left
+  /// stale they would authenticate with the old password on the next recovery
+  /// attempt, fail, and sign the user out — so changing the password in-app
+  /// would look like it had logged them out.
+  Future<void> onPasswordChanged(String newPassword) async {
+    if (_lastAuthEmail != null && _lastAuthEmail!.isNotEmpty) {
+      _lastAuthPassword = newPassword;
+      await _prefs?.setString(_webLoginPasswordKey, newPassword);
+    }
+    // The current access token stays valid, but re-check sooner than the
+    // throttle would normally allow in case the server rotated it.
+    _lastValidatedAt = null;
+  }
+
   /// Ensures the stored JWT is still usable, recovering transparently when it
   /// is not. Order of recovery:
   ///   1. Validate the current access token (`jwt-auth/v1/token/validate`).
@@ -385,28 +416,45 @@ class AuthService extends ChangeNotifier {
   /// This fixes the "after ~7 days the JWT is invalid and users can't log in"
   /// problem: the access token is short-lived, so we refresh/re-auth instead of
   /// treating the stored session as permanently valid.
-  Future<bool> ensureValidSession() async {
+  Future<bool> ensureValidSession({bool force = false}) async {
     if (!isSignedIn) return false;
     if (_ensureSessionInFlight) return isSignedIn;
+
+    if (!force) {
+      final last = _lastValidatedAt;
+      if (last != null && DateTime.now().difference(last) < _revalidateAfter) {
+        return true;
+      }
+    }
+
     _ensureSessionInFlight = true;
     try {
       final token = jwtToken;
       if (token != null && token.isNotEmpty) {
         final status = await _validateToken(token);
-        if (status == true) return true;
+        if (status == true) {
+          _lastValidatedAt = DateTime.now();
+          return true;
+        }
         // Server unreachable (null) → keep the session optimistically; on-demand
         // API calls will retry. Never sign out on a transient network error.
         if (status == null) return true;
       }
       // status == false → the server definitively rejected the token (reachable),
       // so try to recover a fresh one.
-      if (await _refreshAccessToken()) return true;
+      if (await _refreshAccessToken()) {
+        _lastValidatedAt = DateTime.now();
+        return true;
+      }
       if (hasWebLoginCredentials) {
         final res = await _loginWordPress(
           email: _lastAuthEmail!,
           password: _lastAuthPassword!,
         );
-        if (res.isSuccess) return true;
+        if (res.isSuccess) {
+          _lastValidatedAt = DateTime.now();
+          return true;
+        }
       }
       await signOut();
       return false;
@@ -433,11 +481,35 @@ class AuthService extends ChangeNotifier {
         },
       ).timeout(const Duration(seconds: 12));
       if (resp.statusCode == 200) return true;
-      // 401/403 → definitively invalid/expired. Other 5xx → treat as unknown.
-      if (resp.statusCode == 401 || resp.statusCode == 403) return false;
+      if (resp.statusCode == 401 || resp.statusCode == 403) {
+        // Only WordPress itself can pass judgement on the token. Cloudflare
+        // answers POST + Authorization to /wp-json/* with a 403 BEFORE
+        // WordPress runs, and reading that as "token rejected" is what was
+        // signing users out mid-session: validate 403s, refresh 404s, and
+        // ensureValidSession falls through to signOut().
+        return isWordPressAuthRejection(resp) ? false : null;
+      }
       return null;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// True only when the body is a WordPress REST error, so an edge/WAF block
+  /// page is never mistaken for a verdict on the JWT.
+  ///
+  /// Public so this classification — the difference between "your token is
+  /// dead" and "Cloudflare blocked us" — can be tested without a live server.
+  static bool isWordPressAuthRejection(http.Response resp) {
+    final contentType = resp.headers['content-type']?.toLowerCase() ?? '';
+    if (!contentType.contains('json')) return false;
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) return false;
+      final code = decoded['code']?.toString() ?? '';
+      return code.startsWith('jwt_auth') || code.startsWith('rest_');
+    } catch (_) {
+      return false;
     }
   }
 
